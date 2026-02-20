@@ -407,15 +407,6 @@ connect();
 }
 
 // Pre-render HTML pages
-export const CLAUDE_HTML = makeTerminalHTML({
-  title: 'Claude Code',
-  subtitle: 'aihoonbot.com 원격 터미널',
-  accentColor: '#6366f1',
-  accentHover: '#818cf8',
-  storageKey: 'cc_token',
-  wsPath: '/claude/ws',
-});
-
 export const OPENCODE_HTML = makeTerminalHTML({
   title: 'OpenCode',
   subtitle: 'aihoonbot.com 원격 터미널',
@@ -541,6 +532,5 @@ function attachTerminalWss(
 // Public setup functions — called from index.ts
 // ---------------------------------------------------------------------------
 export function setupTerminalWebSocket(server: http.Server): void {
-  attachTerminalWss(server, /^\/claude\/ws(\?.*)?$/, CLAUDE_SPAWN);
   attachTerminalWss(server, /^\/opencode\/ws(\?.*)?$/, OPENCODE_SPAWN);
 }

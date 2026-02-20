@@ -77,7 +77,8 @@ echo   ClaudeCodeWrapper:  https://aihoonbot.com/claude
 echo.
 echo   Local access:
 echo     Messenger:         http://localhost:3000
-echo     ClaudeCodeWrapper:  http://localhost:8000
+echo     ClaudeCodeWrapper: http://localhost:3000/claude  (proxied to :8000)
+echo     ClaudeCodeWrapper: http://localhost:8000         (direct)
 echo ==========================================
 echo.
 echo You can close this window.
