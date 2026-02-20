@@ -37,6 +37,22 @@ if (fs.existsSync(sqlJsWasmSrc)) {
   console.log('[BUILD] Copied sql-wasm.wasm');
 }
 
+// Copy public/ (xterm static files) into dist/public/
+function copyDir(src, dest) {
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) copyDir(srcPath, destPath);
+    else fs.copyFileSync(srcPath, destPath);
+  }
+}
+const publicSrc = path.join(__dirname, 'public');
+if (fs.existsSync(publicSrc)) {
+  copyDir(publicSrc, path.join(distDir, 'public'));
+  console.log('[BUILD] Copied public/');
+}
+
 console.log('[BUILD] Bundle complete: dist/server.cjs');
 console.log('[BUILD] Run with: node dist/server.cjs');
 console.log('[BUILD] Done!');

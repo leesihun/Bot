@@ -147,9 +147,9 @@ function makeTerminalHTML(cfg: ToolConfig): string {
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <title>${cfg.title}</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.css" />
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10/lib/addon-fit.js"></script>
+  <link rel="stylesheet" href="/xterm/xterm.css" />
+  <script src="/xterm/xterm.js"></script>
+  <script src="/xterm/addon-fit.js"></script>
   <style>
     :root {
       --bg: #0a0a0a; --surface: #131313; --border: #262626;
@@ -407,6 +407,15 @@ connect();
 }
 
 // Pre-render HTML pages
+export const CLAUDE_HTML = makeTerminalHTML({
+  title: 'Claude Code',
+  subtitle: 'aihoonbot.com 원격 터미널',
+  accentColor: '#6366f1',
+  accentHover: '#818cf8',
+  storageKey: 'cc_token',
+  wsPath: '/claude/ws',
+});
+
 export const OPENCODE_HTML = makeTerminalHTML({
   title: 'OpenCode',
   subtitle: 'aihoonbot.com 원격 터미널',
@@ -532,5 +541,6 @@ function attachTerminalWss(
 // Public setup functions — called from index.ts
 // ---------------------------------------------------------------------------
 export function setupTerminalWebSocket(server: http.Server): void {
+  attachTerminalWss(server, /^\/claude\/ws(\?.*)?$/, CLAUDE_SPAWN);
   attachTerminalWss(server, /^\/opencode\/ws(\?.*)?$/, OPENCODE_SPAWN);
 }

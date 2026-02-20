@@ -11,13 +11,6 @@ set CLOUDFLARED=C:\Users\Lee\AppData\Local\Microsoft\WinGet\Packages\Cloudflare.
 
 :: --- Verify prerequisites ---
 
-where python >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python is not installed or not in PATH.
-    pause
-    exit /b 1
-)
-
 where node >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Node.js is not installed or not in PATH.
@@ -40,7 +33,7 @@ if not exist "%USERPROFILE%\.cloudflared\config.yml" (
 :: --- Build Messenger web client if needed ---
 
 if not exist "%~dp0Messenger\client\dist-web\index.html" (
-    echo [0/3] Building Messenger web client...
+    echo [0/2] Building Messenger web client...
     cd /d "%~dp0Messenger"
     call npm run build:web
     if %errorlevel% neq 0 (
@@ -54,10 +47,7 @@ if not exist "%~dp0Messenger\client\dist-web\index.html" (
 
 :: --- Start services ---
 
-echo [1/3] Starting ClaudeCodeWrapper (port 8000)...
-start "ClaudeCodeWrapper" cmd /k "cd /d "%~dp0ClaudeCodeWrapper" && python run.py"
-
-echo [2/3] Starting Messenger (port 3000)...
+echo [1/2] Starting Messenger (port 3000)...
 start "Messenger" cmd /k "cd /d "%~dp0Messenger" && npm run dev:server"
 
 :: Wait for services to start before tunnel connects
@@ -65,20 +55,21 @@ echo.
 echo Waiting for services to start...
 timeout /t 4 /nobreak >nul
 
-echo [3/3] Starting Cloudflare Tunnel...
+echo [2/2] Starting Cloudflare Tunnel...
 start "Cloudflare Tunnel" cmd /k ""%CLOUDFLARED%" tunnel run aihoonbot"
 
 echo.
 echo ==========================================
 echo   All services launched!
 echo.
-echo   Messenger:          https://aihoonbot.com
-echo   ClaudeCodeWrapper:  https://aihoonbot.com/claude
+echo   Messenger:    https://aihoonbot.com
+echo   Claude Code:  https://aihoonbot.com/claude
+echo   OpenCode:     https://aihoonbot.com/opencode
 echo.
-echo   Local access:
-echo     Messenger:         http://localhost:3000
-echo     ClaudeCodeWrapper: http://localhost:3000/claude  (proxied to :8000)
-echo     ClaudeCodeWrapper: http://localhost:8000         (direct)
+echo   Local access (all via Messenger on port 3000):
+echo     Messenger:    http://localhost:3000
+echo     Claude Code:  http://localhost:3000/claude
+echo     OpenCode:     http://localhost:3000/opencode
 echo ==========================================
 echo.
 echo You can close this window.

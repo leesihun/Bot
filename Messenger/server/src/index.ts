@@ -4,7 +4,6 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
-import httpProxy from 'http-proxy';
 import { initDatabase } from './db/init.js';
 import { setupSocketHandlers } from './socket/handler.js';
 import { startCleanupCron } from './cron/cleanup.js';
@@ -14,17 +13,8 @@ import uploadRoutes from './routes/upload.js';
 import apiRoutes, { setIoInstance } from './routes/api.js';
 import filesRoutes from './routes/files.js';
 import { setPollerIo, startAllWatchers } from './services/web-poller.js';
-import { setupTerminalWebSocket, OPENCODE_HTML } from './terminal.js';
+import { setupTerminalWebSocket, CLAUDE_HTML, OPENCODE_HTML } from './terminal.js';
 import type { ClientToServerEvents, ServerToClientEvents } from '../../shared/types.js';
-
-// Proxy for ClaudeCodeWrapper (port 8000) served under /claude
-const cwProxy = httpProxy.createProxyServer({ target: 'http://localhost:8000', ws: true });
-cwProxy.on('error', (_err, _req, res) => {
-  if ('writeHead' in res) {
-    (res as any).writeHead(502);
-    (res as any).end('ClaudeCodeWrapper unavailable');
-  }
-});
 
 async function main() {
   await initDatabase();
@@ -35,14 +25,6 @@ async function main() {
   // Terminal WebSocket must be set up BEFORE Socket.IO to ensure its upgrade
   // handler runs first (Socket.IO destroys non-matching upgrade sockets).
   setupTerminalWebSocket(server);
-
-  // Proxy /claude/ws WebSocket upgrades to ClaudeCodeWrapper
-  server.on('upgrade', (req, socket, head) => {
-    if (req.url?.startsWith('/claude/ws')) {
-      req.url = '/ws';
-      cwProxy.ws(req, socket, head);
-    }
-  });
 
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: {
@@ -60,6 +42,9 @@ async function main() {
   // Static files for chat uploads
   app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
+  // xterm.js served locally for offline use
+  app.use('/xterm', express.static(path.join(__dirname, '..', 'public', 'xterm')));
+
   // API Routes
   app.use('/auth', authRoutes);
   app.use('/rooms', roomRoutes);
@@ -72,9 +57,9 @@ async function main() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // ClaudeCodeWrapper proxy: /claude → localhost:8000
-  // Express strips the /claude prefix, so req.url inside the handler is relative to 8000's root
-  app.use('/claude', (req, res) => { cwProxy.web(req, res); });
+  // Claude Code Terminal: /claude
+  app.get('/claude', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(CLAUDE_HTML); });
+  app.get('/claude/', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(CLAUDE_HTML); });
 
   // OpenCode Terminal: /opencode
   app.get('/opencode', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(OPENCODE_HTML); });
