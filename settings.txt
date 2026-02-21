@@ -21,3 +21,13 @@ CLOUDFLARED_CONFIG="$HOME/.cloudflared/config.yml"
 # Set to "true" to warn if the opencode CLI binary is not found.
 CHECK_OPENCODE=true
 OPENCODE_CMD=opencode
+
+# --- LLM API ---
+LLM_API_PORT=10007
+LLM_API_TOOLS_PORT=10006
+
+# --- Hoonbot ---
+HOONBOT_PORT=3939
+HOONBOT_HOME_ROOM_ID=1
+HOONBOT_HEARTBEAT_ENABLED=true
+HOONBOT_HEARTBEAT_INTERVAL=360

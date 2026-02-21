@@ -57,7 +57,7 @@ fi
 
 # --- Build Messenger web client if needed ---
 if [ ! -f "$SCRIPT_DIR/Messenger/client/dist-web/index.html" ]; then
-    echo "[0/3] Building Messenger web client..."
+    echo "[0/5] Building Messenger web client..."
     cd "$SCRIPT_DIR/Messenger"
     npm run build:web
     if [ $? -ne 0 ]; then
@@ -70,21 +70,31 @@ if [ ! -f "$SCRIPT_DIR/Messenger/client/dist-web/index.html" ]; then
 fi
 
 # --- Start Services ---
-echo "[1/3] Starting ClaudeCodeWrapper (port $CLAUDE_WRAPPER_PORT)..."
-gnome-terminal --tab --title="ClaudeCodeWrapper" -- bash -c "cd '$SCRIPT_DIR/ClaudeCodeWrapper' && python3 run.py; exec bash"
+echo "[1/5] Starting LLM API tools server (port $LLM_API_TOOLS_PORT)..."
+gnome-terminal --tab --title="LLM_API Tools" -- bash -c "cd '$SCRIPT_DIR/../LLM_API' && python3 tools_server.py; exec bash"
+sleep 2
 
-echo "[2/3] Starting Messenger (port $MESSENGER_PORT)..."
+echo "[2/5] Starting LLM API main server (port $LLM_API_PORT)..."
+gnome-terminal --tab --title="LLM_API" -- bash -c "cd '$SCRIPT_DIR/../LLM_API' && python3 run_backend.py; exec bash"
+
+echo "[3/5] Starting Messenger (port $MESSENGER_PORT)..."
 gnome-terminal --tab --title="Messenger" -- bash -c "cd '$SCRIPT_DIR/Messenger' && npm run dev:server; exec bash"
+
+echo "[4/5] Starting Hoonbot (port $HOONBOT_PORT)..."
+gnome-terminal --tab --title="Hoonbot" -- bash -c "cd '$SCRIPT_DIR/Hoonbot' && python3 hoonbot.py; exec bash"
+
+echo "[5/5] Starting ClaudeCodeWrapper (port $CLAUDE_WRAPPER_PORT)..."
+gnome-terminal --tab --title="ClaudeCodeWrapper" -- bash -c "cd '$SCRIPT_DIR/ClaudeCodeWrapper' && python3 run.py; exec bash"
 
 echo
 echo "Waiting for services to start..."
 sleep 4
 
 if [ "$USE_CLOUDFLARE" = "true" ]; then
-    echo "[3/3] Starting Cloudflare Tunnel ($CLOUDFLARE_TUNNEL_NAME)..."
+    echo "Starting Cloudflare Tunnel ($CLOUDFLARE_TUNNEL_NAME)..."
     gnome-terminal --tab --title="Cloudflare Tunnel" -- bash -c "'$CLOUDFLARED_BIN' tunnel run $CLOUDFLARE_TUNNEL_NAME; exec bash"
 else
-    echo "[3/3] Cloudflare disabled (USE_CLOUDFLARE=false in settings.txt). Skipping."
+    echo "Cloudflare disabled (USE_CLOUDFLARE=false in settings.txt). Skipping."
 fi
 
 echo
@@ -98,7 +108,9 @@ if [ "$USE_CLOUDFLARE" = "true" ]; then
     echo
 fi
 echo "  Local access:"
+echo "    LLM API:           http://localhost:$LLM_API_PORT"
 echo "    Messenger:         http://localhost:$MESSENGER_PORT"
+echo "    Hoonbot:           http://localhost:$HOONBOT_PORT"
 echo "    ClaudeCodeWrapper: http://localhost:$CLAUDE_WRAPPER_PORT"
 echo "    OpenCode:          http://localhost:$MESSENGER_PORT/opencode"
 echo "=========================================="
