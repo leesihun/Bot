@@ -4,6 +4,7 @@ from typing import List, Optional
 
 import httpx
 import config
+from core.retry import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +71,46 @@ async def register_webhook(url: str, events: List[str]) -> None:
         logger.info(f"[Messenger] Webhook registered: {url} for events={events}")
 
 
+def _split_message(text: str, limit: int) -> list:
+    """Split text into chunks that respect paragraph and line boundaries."""
+    if len(text) <= limit:
+        return [text]
+
+    chunks = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        # Try to split at a double newline (paragraph break)
+        cut = text.rfind("\n\n", 0, limit)
+        if cut == -1:
+            # Try single newline
+            cut = text.rfind("\n", 0, limit)
+        if cut == -1:
+            # Try space
+            cut = text.rfind(" ", 0, limit)
+        if cut == -1:
+            # Hard cut
+            cut = limit
+        chunks.append(text[:cut].rstrip())
+        text = text[cut:].lstrip()
+    return chunks
+
+
 async def send_message(room_id: int, content: str) -> None:
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/send-message",
-            headers=_headers(),
-            json={"roomId": room_id, "content": content, "type": "text"},
-        )
-        resp.raise_for_status()
+    """Send a message, automatically splitting if it exceeds the character limit."""
+    chunks = _split_message(content, config.MAX_MESSAGE_LENGTH)
+    for chunk in chunks:
+        async def _send(c=chunk):
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{config.MESSENGER_URL}/api/send-message",
+                    headers=_headers(),
+                    json={"roomId": room_id, "content": c, "type": "text"},
+                )
+                resp.raise_for_status()
+
+        await with_retry(_send, label="Messenger send", max_attempts=3)
 
 
 async def send_typing(room_id: int) -> None:
@@ -116,3 +149,33 @@ async def get_bot_info() -> Optional[dict]:
     except Exception:
         pass
     return None
+
+
+async def get_rooms(bot_user_id: int) -> list:
+    """Fetch rooms the bot belongs to."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{config.MESSENGER_URL}/rooms",
+                params={"userId": bot_user_id},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as exc:
+        logger.warning(f"[Messenger] get_rooms failed: {exc}")
+    return []
+
+
+async def get_room_messages(room_id: int, limit: int = 20) -> list:
+    """Fetch recent messages from a room (newest-last order)."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{config.MESSENGER_URL}/rooms/{room_id}/messages",
+                params={"limit": limit},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+    except Exception as exc:
+        logger.warning(f"[Messenger] get_room_messages({room_id}) failed: {exc}")
+    return []

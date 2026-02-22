@@ -49,6 +49,22 @@ async def clear_history(db: aiosqlite.Connection, room_id: int) -> None:
     await db.commit()
 
 
+async def get_count(db: aiosqlite.Connection, room_id: int) -> int:
+    """Return number of history rows for a room."""
+    async with db.execute(
+        "SELECT COUNT(*) FROM room_history WHERE room_id = ?", (room_id,)
+    ) as cur:
+        row = await cur.fetchone()
+    return row[0] if row else 0
+
+
+async def get_active_rooms(db: aiosqlite.Connection) -> List[int]:
+    """Return list of room IDs that have history entries."""
+    async with db.execute("SELECT DISTINCT room_id FROM room_history") as cur:
+        rows = await cur.fetchall()
+    return [r[0] for r in rows]
+
+
 async def _trim(db: aiosqlite.Connection, room_id: int) -> None:
     """Keep only the most recent MAX_HISTORY_MESSAGES rows per room."""
     limit = config.MAX_HISTORY_MESSAGES

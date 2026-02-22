@@ -23,8 +23,10 @@ from core import memory as mem_store
 from core import messenger
 from core import scheduler
 from core import heartbeat
+from core import scheduled as sched_store
+from core import status_file
 from handlers.health import router as health_router
-from handlers.webhook import router as webhook_router, set_db
+from handlers.webhook import router as webhook_router, set_db, process_message
 
 logging.basicConfig(
     level=logging.INFO,
@@ -53,6 +55,55 @@ def _save_key(key: str) -> None:
         f.write(key)
 
 
+async def _catch_up(db: aiosqlite.Connection) -> None:
+    """
+    On startup, find the last unanswered human message in each room Hoonbot
+    belongs to and process it — handles messages sent while Hoonbot was offline.
+    """
+    bot_info = await messenger.get_bot_info()
+    if not bot_info:
+        logger.warning("[CatchUp] Could not get bot info, skipping")
+        return
+
+    bot_id = bot_info["id"]
+    rooms = await messenger.get_rooms(bot_id)
+    logger.info(f"[CatchUp] Scanning {len(rooms)} room(s) for missed messages")
+
+    for room in rooms:
+        room_id = room["id"]
+        messages = await messenger.get_room_messages(room_id, limit=20)
+        if not messages:
+            continue
+
+        # Find the last human message and whether Hoonbot replied after it
+        last_human_idx = -1
+        for i, msg in enumerate(messages):
+            if (
+                msg.get("senderName") != config.MESSENGER_BOT_NAME
+                and not msg.get("isBot")
+                and msg.get("type") == "text"
+                and msg.get("content", "").strip()
+            ):
+                last_human_idx = i
+
+        if last_human_idx == -1:
+            continue  # No human messages
+
+        # Did Hoonbot already reply after the last human message?
+        hoonbot_replied = any(
+            msg.get("senderName") == config.MESSENGER_BOT_NAME
+            for msg in messages[last_human_idx + 1:]
+        )
+        if hoonbot_replied:
+            continue
+
+        missed = messages[last_human_idx]
+        content = missed.get("content", "").strip()
+        sender = missed.get("senderName", "unknown")
+        logger.info(f"[CatchUp] Room {room_id}: missed msg from {sender!r}: {content[:50]!r}")
+        await process_message(room_id, content, sender)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _db
@@ -63,6 +114,7 @@ async def lifespan(app: FastAPI):
     await _db.execute("PRAGMA journal_mode=WAL")
     await hist_store.init_history(_db)
     await mem_store.init_memory(_db)
+    await sched_store.init_scheduled(_db)
     set_db(_db)
     logger.info(f"[DB] Opened: {config.DB_PATH}")
 
@@ -92,7 +144,14 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("[Heartbeat] Disabled")
 
+    # --- Initial status snapshot ---
+    await status_file.refresh(_db)
+
     logger.info(f"[Hoonbot] Ready on port {config.HOONBOT_PORT}")
+
+    # --- Catch up on missed messages ---
+    asyncio.create_task(_catch_up(_db))
+
     yield
 
     # --- Shutdown ---

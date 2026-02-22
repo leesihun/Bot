@@ -1,9 +1,14 @@
 """Persistent key-value memory store backed by SQLite FTS5."""
+import os
 import re
+import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 
 import aiosqlite
+import config
+
+logger = logging.getLogger(__name__)
 
 
 async def init_memory(db: aiosqlite.Connection) -> None:
@@ -63,6 +68,20 @@ async def save(db: aiosqlite.Connection, key: str, value: str, tags: List[str] =
     await db.commit()
 
 
+async def delete(db: aiosqlite.Connection, key: str) -> bool:
+    """Delete a memory by key. Returns True if a row was deleted."""
+    cursor = await db.execute("DELETE FROM memory WHERE key = ?", (key,))
+    await db.commit()
+    return cursor.rowcount > 0
+
+
+async def clear_all(db: aiosqlite.Connection) -> int:
+    """Delete all memories. Returns count of deleted rows."""
+    cursor = await db.execute("DELETE FROM memory")
+    await db.commit()
+    return cursor.rowcount
+
+
 async def recall(db: aiosqlite.Connection, key: str) -> Optional[str]:
     async with db.execute("SELECT value FROM memory WHERE key = ?", (key,)) as cur:
         row = await cur.fetchone()
@@ -82,30 +101,92 @@ async def search(db: aiosqlite.Connection, query: str, limit: int = 10) -> List[
 
 
 async def list_all(db: aiosqlite.Connection, tag: Optional[str] = None) -> List[Dict]:
+    # Order by updated_at DESC — most recently updated memories first (temporal relevance)
     if tag:
         async with db.execute(
-            "SELECT key, value, tags, updated_at FROM memory WHERE tags LIKE ? ORDER BY key",
+            "SELECT key, value, tags, updated_at FROM memory WHERE tags LIKE ? ORDER BY updated_at DESC",
             (f"%{tag}%",),
         ) as cur:
             rows = await cur.fetchall()
     else:
         async with db.execute(
-            "SELECT key, value, tags, updated_at FROM memory ORDER BY key"
+            "SELECT key, value, tags, updated_at FROM memory ORDER BY updated_at DESC"
         ) as cur:
             rows = await cur.fetchall()
     return [{"key": r[0], "value": r[1], "tags": r[2], "updated_at": r[3]} for r in rows]
 
 
 async def format_for_prompt(db: aiosqlite.Connection) -> str:
-    """Return all memories as a compact string for injection into a system prompt."""
+    """Return all memories + extra reference docs as a string for the system prompt.
+
+    Memories are ordered by recency (most recently updated first) so the LLM
+    naturally gives more weight to fresh information.
+    """
+    parts = []
+
+    # --- SQLite memories (temporal order, skip internal _system entries) ---
     rows = await list_all(db)
-    if not rows:
+    user_rows = [r for r in rows if "_system" not in r["tags"]]
+    if user_rows:
+        lines = ["## Persistent Memory\n"]
+        for r in user_rows:
+            tag_suffix = f" [{r['tags']}]" if r["tags"] else ""
+            age = _format_age(r["updated_at"])
+            lines.append(f"- {r['key']}: {r['value']}{tag_suffix}  _({age})_")
+        parts.append("\n".join(lines))
+
+    # --- Extra reference paths ---
+    extra = _load_extra_paths()
+    if extra:
+        parts.append(extra)
+
+    return "\n\n".join(parts)
+
+
+def _format_age(updated_at: str) -> str:
+    """Convert ISO timestamp to human-readable age string."""
+    try:
+        dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        days = (now - dt).days
+        if days == 0:
+            return "today"
+        elif days == 1:
+            return "yesterday"
+        else:
+            return f"{days}d ago"
+    except Exception:
+        return updated_at[:10]
+
+
+def _load_extra_paths() -> str:
+    """Synchronously load Markdown files from configured extra memory paths."""
+    if not config.MEMORY_EXTRA_PATHS:
         return ""
-    lines = ["## Persistent Memory\n"]
-    for r in rows:
-        tag_suffix = f" [{r['tags']}]" if r["tags"] else ""
-        lines.append(f"- {r['key']}: {r['value']}{tag_suffix}")
-    return "\n".join(lines)
+
+    sections = []
+    for raw_path in config.MEMORY_EXTRA_PATHS:
+        path = os.path.expanduser(raw_path)
+        if os.path.isfile(path) and path.endswith(".md"):
+            _try_load_file(path, sections)
+        elif os.path.isdir(path):
+            for fname in sorted(os.listdir(path)):
+                if fname.endswith(".md"):
+                    _try_load_file(os.path.join(path, fname), sections)
+
+    if not sections:
+        return ""
+    return "## Reference Documents\n\n" + "\n\n".join(sections)
+
+
+def _try_load_file(path: str, sections: list) -> None:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+        if content:
+            sections.append(f"### {os.path.basename(path)}\n\n{content}")
+    except Exception as e:
+        logger.warning(f"[Memory] Extra path load failed {path}: {e}")
 
 
 def parse_memory_commands(text: str) -> List[Dict]:
@@ -126,4 +207,16 @@ def parse_memory_commands(text: str) -> List[Dict]:
 def strip_memory_commands(text: str) -> str:
     """Remove [MEMORY_SAVE: ...] commands from text before sending to user."""
     pattern = r'\[MEMORY_SAVE:[^\]]*\]\n?'
+    return re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+
+
+def parse_memory_delete_commands(text: str) -> List[str]:
+    """Extract [MEMORY_DELETE: key=...] commands from LLM output. Returns list of keys."""
+    pattern = r'\[MEMORY_DELETE:\s*key=([^\]]+)\]'
+    return [m.group(1).strip() for m in re.finditer(pattern, text, re.IGNORECASE)]
+
+
+def strip_memory_delete_commands(text: str) -> str:
+    """Remove [MEMORY_DELETE: ...] commands from text."""
+    pattern = r'\[MEMORY_DELETE:[^\]]*\]\n?'
     return re.sub(pattern, "", text, flags=re.IGNORECASE).strip()

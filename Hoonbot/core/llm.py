@@ -5,6 +5,7 @@ from typing import List, Dict, Optional
 
 import httpx
 import config
+from core.retry import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +31,16 @@ async def chat(
     if session_id:
         form_data["session_id"] = session_id
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{config.LLM_API_URL}/v1/chat/completions",
-            data=form_data,
-        )
-        resp.raise_for_status()
-        body = resp.json()
+    async def _call():
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{config.LLM_API_URL}/v1/chat/completions",
+                data=form_data,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    body = await with_retry(_call, label="LLM chat", max_attempts=3, base_delay=2.0)
 
     # OpenAI-compatible response shape
     try:
@@ -66,11 +70,25 @@ def build_messages(
 ) -> List[Dict[str, str]]:
     """
     Assemble the full messages list:
-    [system (SOUL + memory), ...history, user]
+    [system (SOUL + memory + skills + daily log), ...history, user]
     """
+    from core import skills as skills_mod
+    from core import daily_log
+
     system_parts = [soul]
     if memory_context:
         system_parts.append(memory_context)
+
+    # Skills — loaded fresh each call so self-created skills appear immediately
+    skills_ctx = skills_mod.load_skills()
+    if skills_ctx:
+        system_parts.append(skills_ctx)
+
+    # Recent daily logs (today + yesterday) for narrative context
+    log_ctx = daily_log.load_recent_logs()
+    if log_ctx:
+        system_parts.append(log_ctx)
+
     system_content = "\n\n".join(system_parts)
 
     messages = [{"role": "system", "content": system_content}]

@@ -259,7 +259,7 @@ function makeTerminalHTML(cfg: ToolConfig): string {
 const STORAGE_KEY = '${cfg.storageKey}';
 const WS_PATH = '${cfg.wsPath}';
 
-let ws = null, authed = false, sessionActive = false;
+let ws = null, authed = false, sessionActive = false, wasSessionActive = false;
 let token = localStorage.getItem(STORAGE_KEY) || '';
 let reconnectMs = 1500, reconnectTimer = null;
 let term = null, fitAddon = null;
@@ -309,7 +309,9 @@ function connect() {
     if (token) ws.send(JSON.stringify({ type: 'auth', token }));
   };
   ws.onclose = () => {
-    setConn(false); sessionActive = false;
+    setConn(false);
+    wasSessionActive = sessionActive;
+    sessionActive = false;
     if (authed) { reconnectTimer = setTimeout(connect, reconnectMs); reconnectMs = Math.min(reconnectMs * 2, 30000); }
   };
   ws.onerror = () => {};
@@ -330,6 +332,15 @@ function handle(msg) {
       $login.style.display = 'none'; $app.style.display = 'flex';
       populateWorkspaces(msg.workspaces || [], msg.defaultWorkspace);
       if (!term) initTerm();
+      if (wasSessionActive) {
+        wasSessionActive = false;
+        ws.send(JSON.stringify({ type: 'reconnect', cols: term?.cols || 120, rows: term?.rows || 40 }));
+      } else {
+        setTimeout(() => startSession(), 100);
+      }
+      break;
+    case 'session_none':
+      // Server has no active session to reattach — start a fresh one.
       setTimeout(() => startSession(), 100);
       break;
     case 'auth_fail':
@@ -426,22 +437,26 @@ export const OPENCODE_HTML = makeTerminalHTML({
 });
 
 // ---------------------------------------------------------------------------
-// Session class (generic — receives spawn target at construction)
+// Persistent session — PTY stays alive across WebSocket disconnects.
+// Multiple WebSocket clients can attach/detach freely.
 // ---------------------------------------------------------------------------
-class TerminalSession {
+class PersistentSession {
   private ptyProcess: pty.IPty | null = null;
-  private ws: WebSocket;
-  private spawnTarget: SpawnTarget;
+  private readonly clients: Set<WebSocket> = new Set();
+  private outputBuffer = '';
+  private readonly MAX_BUFFER = 50_000; // chars of recent output replayed on reconnect
 
-  constructor(ws: WebSocket, spawnTarget: SpawnTarget) {
-    this.ws = ws;
-    this.spawnTarget = spawnTarget;
-  }
+  constructor(private readonly spawnTarget: SpawnTarget) {}
 
-  start(workspace: string, cols: number, rows: number): void {
-    if (this.ptyProcess) this.kill();
+  isRunning(): boolean { return this.ptyProcess !== null; }
 
-    const resolvedWorkspace = workspace
+  /** Kill any existing PTY and start a fresh one. The requesting WS is added to clients. */
+  start(ws: WebSocket, workspace: string, cols: number, rows: number): void {
+    this.clients.add(ws);
+    if (this.ptyProcess) { try { this.ptyProcess.kill(); } catch {} this.ptyProcess = null; }
+    this.outputBuffer = '';
+
+    const cwd = workspace
       ? (workspace.includes(path.sep) || workspace.includes('/')
           ? workspace
           : path.join(WORKSPACE_DIR, workspace))
@@ -452,38 +467,71 @@ class TerminalSession {
         name: 'xterm-256color',
         cols: cols || 120,
         rows: rows || 40,
-        cwd: resolvedWorkspace,
+        cwd,
         env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' } as NodeJS.ProcessEnv,
       });
 
       this.ptyProcess.onData((data: string) => {
-        if (this.ws.readyState === WebSocket.OPEN)
-          this.ws.send(JSON.stringify({ type: 'output', data }));
+        this.outputBuffer += data;
+        if (this.outputBuffer.length > this.MAX_BUFFER)
+          this.outputBuffer = this.outputBuffer.slice(-this.MAX_BUFFER);
+        this.broadcast({ type: 'output', data });
       });
 
       this.ptyProcess.onExit(({ exitCode }: { exitCode: number }) => {
-        if (this.ws.readyState === WebSocket.OPEN)
-          this.ws.send(JSON.stringify({ type: 'exit', code: exitCode }));
+        this.broadcast({ type: 'exit', code: exitCode });
         this.ptyProcess = null;
+        this.outputBuffer = '';
       });
 
-      this.ws.send(JSON.stringify({ type: 'session_started' }));
+      this.broadcast({ type: 'session_started' });
     } catch (err: any) {
-      this.ws.send(JSON.stringify({ type: 'error', message: `PTY 시작 실패: ${err.message}` }));
+      this.send(ws, { type: 'error', message: `PTY 시작 실패: ${err.message}` });
     }
   }
 
+  /**
+   * Attach a reconnecting WS to the existing session.
+   * Replays buffered output so the client is back in sync.
+   * Returns true if a session is running, false if there is nothing to attach to.
+   */
+  attach(ws: WebSocket, cols?: number, rows?: number): boolean {
+    this.clients.add(ws);
+    if (this.ptyProcess) {
+      if (this.outputBuffer) this.send(ws, { type: 'output', data: this.outputBuffer });
+      if (cols && rows) try { this.ptyProcess.resize(cols, rows); } catch {}
+      this.send(ws, { type: 'session_started' });
+      return true;
+    }
+    return false;
+  }
+
+  /** Detach a WS without killing the PTY. */
+  detach(ws: WebSocket): void { this.clients.delete(ws); }
+
   write(data: string): void { this.ptyProcess?.write(data); }
 
-  resize(cols: number, rows: number): void { this.ptyProcess?.resize(cols, rows); }
+  resize(cols: number, rows: number): void { try { this.ptyProcess?.resize(cols, rows); } catch {} }
 
   kill(): void {
     if (this.ptyProcess) { try { this.ptyProcess.kill(); } catch {} this.ptyProcess = null; }
+    this.outputBuffer = '';
+  }
+
+  private broadcast(msg: object): void {
+    const payload = JSON.stringify(msg);
+    for (const ws of this.clients)
+      if (ws.readyState === WebSocket.OPEN) try { ws.send(payload); } catch {}
+  }
+
+  private send(ws: WebSocket, msg: object): void {
+    if (ws.readyState === WebSocket.OPEN) try { ws.send(JSON.stringify(msg)); } catch {}
   }
 }
 
 // ---------------------------------------------------------------------------
 // Generic WebSocket terminal handler factory
+// One PersistentSession per tool — survives WebSocket disconnects.
 // ---------------------------------------------------------------------------
 function attachTerminalWss(
   server: http.Server,
@@ -491,6 +539,7 @@ function attachTerminalWss(
   spawnTarget: SpawnTarget,
 ): void {
   const wss = new WebSocketServer({ noServer: true });
+  const session = new PersistentSession(spawnTarget); // shared across all connections
 
   server.on('upgrade', (req, socket, head) => {
     if (wsUrlPattern.test(req.url || '')) {
@@ -500,7 +549,6 @@ function attachTerminalWss(
 
   wss.on('connection', (ws: WebSocket) => {
     let authed = false;
-    const session = new TerminalSession(ws, spawnTarget);
 
     ws.on('message', (raw: Buffer | string) => {
       let msg: any;
@@ -519,21 +567,33 @@ function attachTerminalWss(
             ws.send(JSON.stringify({ type: 'auth_fail' }));
           }
           break;
+
         case 'start':
           if (!authed) { ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' })); break; }
-          session.start(msg.workspace || '', Number(msg.cols) || 120, Number(msg.rows) || 40);
+          session.start(ws, msg.workspace || '', Number(msg.cols) || 120, Number(msg.rows) || 40);
           break;
+
+        case 'reconnect':
+          // Client requests to reattach to existing session instead of starting a new one.
+          if (!authed) { ws.send(JSON.stringify({ type: 'error', message: 'Not authenticated' })); break; }
+          if (!session.attach(ws, Number(msg.cols) || undefined, Number(msg.rows) || undefined)) {
+            ws.send(JSON.stringify({ type: 'session_none' }));
+          }
+          break;
+
         case 'input':
           if (authed && typeof msg.data === 'string') session.write(msg.data);
           break;
+
         case 'resize':
           if (authed) session.resize(Number(msg.cols) || 80, Number(msg.rows) || 24);
           break;
       }
     });
 
-    ws.on('close', () => session.kill());
-    ws.on('error', () => session.kill());
+    // Detach only — PTY keeps running so the next connection can reattach.
+    ws.on('close', () => session.detach(ws));
+    ws.on('error', () => session.detach(ws));
   });
 }
 
