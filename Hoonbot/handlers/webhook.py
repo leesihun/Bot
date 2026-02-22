@@ -99,10 +99,14 @@ async def handle_webhook(request: Request):
 
 
 def _schedule_debounced(room_id: int, content: str, sender_name: str) -> None:
-    """Cancel any pending debounce for this room and schedule a new one."""
+    """Cancel any pending debounce for this room and schedule a new one.
+    Multiple messages within the debounce window are concatenated."""
     entry = _room_debounce.get(room_id)
     if entry and entry["task"] and not entry["task"].done():
         entry["task"].cancel()
+        combined = entry["content"] + "\n" + content
+    else:
+        combined = content
 
     async def _debounce():
         await asyncio.sleep(_DEBOUNCE_SECONDS)
@@ -111,7 +115,7 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str) -> None:
             await process_message(room_id, final["content"], final["sender"])
 
     _room_debounce[room_id] = {
-        "content": content,
+        "content": combined,
         "sender": sender_name,
         "task": asyncio.create_task(_debounce()),
     }
@@ -198,7 +202,11 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
     except Exception as exc:
         logger.error(f"[Webhook] process_message failed: {exc}", exc_info=True)
         try:
-            await messenger.send_message(room_id, f"⚠️ Error: {exc}")
+            if "Connect" in type(exc).__name__ or "Timeout" in type(exc).__name__:
+                user_msg = "⚠️ LLM 서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요."
+            else:
+                user_msg = "⚠️ 응답을 생성하는 중 오류가 발생했어요. 잠시 후 다시 시도해주세요."
+            await messenger.send_message(room_id, user_msg)
         except Exception:
             pass
     finally:

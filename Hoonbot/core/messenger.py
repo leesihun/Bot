@@ -30,7 +30,7 @@ def _headers() -> dict:
 async def register_bot(name: str) -> str:
     """
     Register Hoonbot with Messenger and return its API key.
-    If a bot with this name already exists, Messenger returns its existing key.
+    If the bot already exists, Messenger returns a fresh key for it (idempotent).
     """
     global _bot_id
     async with httpx.AsyncClient(timeout=10) as client:
@@ -156,7 +156,8 @@ async def get_rooms(bot_user_id: int) -> list:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{config.MESSENGER_URL}/rooms",
+                f"{config.MESSENGER_URL}/api/rooms",
+                headers=_headers(),
                 params={"userId": bot_user_id},
             )
             if resp.status_code == 200:
@@ -167,11 +168,12 @@ async def get_rooms(bot_user_id: int) -> list:
 
 
 async def get_room_messages(room_id: int, limit: int = 20) -> list:
-    """Fetch recent messages from a room (newest-last order)."""
+    """Fetch recent messages from a room (oldest-first order)."""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{config.MESSENGER_URL}/rooms/{room_id}/messages",
+                f"{config.MESSENGER_URL}/api/messages/{room_id}",
+                headers=_headers(),
                 params={"limit": limit},
             )
             if resp.status_code == 200:

@@ -193,14 +193,16 @@ def parse_memory_commands(text: str) -> List[Dict]:
     """
     Extract [MEMORY_SAVE: key=..., value=..., tags=...] commands from LLM output.
     Returns list of dicts with keys: key, value, tags (list).
+    Value may contain commas — the regex uses lookahead for ', tags=' or ']'.
     """
-    pattern = r'\[MEMORY_SAVE:\s*key=([^,\]]+),\s*value=([^,\]]+)(?:,\s*tags=([^\]]*))?\]'
+    pattern = r'\[MEMORY_SAVE:\s*key=([^,\]]+),\s*value=(.*?)(?:,\s*tags=([^\]]*))?\]'
     commands = []
     for m in re.finditer(pattern, text, re.IGNORECASE):
         key = m.group(1).strip()
         value = m.group(2).strip()
-        tags = [t.strip() for t in m.group(3).split(",")] if m.group(3) else []
-        commands.append({"key": key, "value": value, "tags": tags})
+        tags = [t.strip() for t in m.group(3).split(",") if t.strip()] if m.group(3) else []
+        if key and value:
+            commands.append({"key": key, "value": value, "tags": tags})
     return commands
 
 

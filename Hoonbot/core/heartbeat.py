@@ -78,9 +78,9 @@ def _is_active_hours() -> bool:
         return current >= start or current <= end
 
 
-async def _run_scheduled_jobs(db: aiosqlite.Connection) -> None:
-    """Check for due scheduled jobs and execute them."""
-    now = datetime.now(timezone.utc)
+async def _run_scheduled_jobs(db: aiosqlite.Connection, local_now: datetime = None) -> None:
+    """Check for due scheduled jobs and execute them using local time."""
+    now = local_now or datetime.now()
     due_jobs = await sched_store.get_due_jobs(db, now)
 
     for job in due_jobs:
@@ -120,7 +120,8 @@ async def tick(db: aiosqlite.Connection) -> None:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     logger.info(f"[Heartbeat] Tick at {now}")
 
-    await _run_scheduled_jobs(db)
+    local_now = datetime.now()
+    await _run_scheduled_jobs(db, local_now)
     await _maybe_compaction_flushes(db)
 
     try:

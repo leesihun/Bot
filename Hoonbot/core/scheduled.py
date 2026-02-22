@@ -107,7 +107,7 @@ async def get_due_jobs(db: aiosqlite.Connection, now: datetime) -> List[Dict]:
 
 async def mark_run(db: aiosqlite.Connection, job_id: int, disable_if_once: bool = False) -> None:
     """Mark a job as having been run. For one-time jobs, disable them."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
     if disable_if_once:
         await db.execute(
             "UPDATE scheduled_jobs SET last_run = ?, enabled = 0 WHERE id = ?", (now, job_id)
@@ -120,32 +120,42 @@ async def mark_run(db: aiosqlite.Connection, job_id: int, disable_if_once: bool 
 
 
 def _cron_matches(cron: str, now: datetime) -> bool:
-    """Check if a cron expression matches the current time.
+    """Check if a cron expression matches or is overdue at the current time.
+
+    Uses "at or past" semantics: fires if the current time >= scheduled time.
+    Combined with the per-day last_run guard in get_due_jobs, this ensures a
+    daily job fires even when the heartbeat interval is coarser than one minute.
 
     Supports:
     - "HH:MM" shorthand for daily at that time
-    - "minute hour * * *" (5-field, only minute and hour checked for now)
+    - "minute hour day month dow" (5-field standard cron)
     """
     cron = cron.strip()
 
-    # HH:MM shorthand
+    # HH:MM shorthand — fire if current time is at or past the scheduled time today
     if re.match(r"^\d{1,2}:\d{2}$", cron):
         parts = cron.split(":")
-        return now.hour == int(parts[0]) and now.minute == int(parts[1])
+        sched_mins = int(parts[0]) * 60 + int(parts[1])
+        now_mins = now.hour * 60 + now.minute
+        return now_mins >= sched_mins
 
-    # 5-field cron
+    # 5-field cron — check day/month/dow exactly; use "at or past" for hour:minute
     fields = cron.split()
     if len(fields) == 5:
         minute, hour, day, month, dow = fields
-        if minute != "*" and now.minute != int(minute):
-            return False
-        if hour != "*" and now.hour != int(hour):
+        if month != "*" and now.month != int(month):
             return False
         if day != "*" and now.day != int(day):
             return False
-        if month != "*" and now.month != int(month):
-            return False
         if dow != "*" and now.isoweekday() % 7 != int(dow):
+            return False
+        # "At or past" for hour:minute within the current day/period
+        if hour != "*":
+            sched_mins = int(hour) * 60 + (int(minute) if minute != "*" else 0)
+            now_mins = now.hour * 60 + now.minute
+            if now_mins < sched_mins:
+                return False
+        elif minute != "*" and now.minute < int(minute):
             return False
         return True
 

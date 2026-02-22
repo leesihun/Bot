@@ -84,7 +84,7 @@ function getReactionsForMessage(messageId: number) {
 function getReplyTo(replyToId: number | null): any {
   if (!replyToId) return null;
   const row = queryOne(
-    `SELECT m.*, u.name as sender_name, u.ip as sender_ip
+    `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
      FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`,
     [replyToId],
   );
@@ -106,6 +106,7 @@ function getReplyTo(replyToId: number | null): any {
     updatedAt: row.updated_at,
     senderName: row.sender_name,
     senderIp: row.sender_ip,
+    isBot: !!row.sender_is_bot,
     readBy: [],
     reactions: [],
     replyTo: null,
@@ -130,6 +131,7 @@ function buildMessageData(m: any) {
     updatedAt: m.updated_at,
     senderName: m.sender_name,
     senderIp: m.sender_ip,
+    isBot: !!m.sender_is_bot,
     readBy: (m._readBy ?? []) as number[],
     reactions: getReactionsForMessage(m.id),
     replyTo: getReplyTo(m.reply_to),
@@ -142,7 +144,7 @@ function generateApiKey(): string {
 
 function fetchFullMessage(messageId: number) {
   return queryOne(
-    `SELECT m.*, u.name as sender_name, u.ip as sender_ip
+    `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
      FROM messages m JOIN users u ON u.id = m.sender_id
      WHERE m.id = ?`,
     [messageId],
@@ -341,7 +343,7 @@ router.get('/messages/:roomId', (req: Request, res: Response) => {
   }
 
   let sql = `
-    SELECT m.*, u.name as sender_name, u.ip as sender_ip
+    SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
     FROM messages m JOIN users u ON u.id = m.sender_id
     WHERE m.room_id = ?
   `;
@@ -474,7 +476,7 @@ router.get('/search', (req: Request, res: Response) => {
   const limit = Math.min(Number(req.query.limit) || 50, 100);
 
   let sql = `
-    SELECT m.*, u.name as sender_name, u.ip as sender_ip
+    SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
     FROM messages m JOIN users u ON u.id = m.sender_id
     WHERE m.is_deleted = 0 AND m.content LIKE ?
   `;
@@ -797,9 +799,20 @@ router.post('/bots', (req: Request, res: Response) => {
     return;
   }
 
-  const existing = queryOne('SELECT id FROM users WHERE name = ?', [trimmedName]);
+  const existing = queryOne('SELECT * FROM users WHERE name = ?', [trimmedName]);
   if (existing) {
-    res.status(409).json({ error: 'A user with this name already exists.' });
+    if (!existing.is_bot) {
+      res.status(409).json({ error: 'A non-bot user with this name already exists.' });
+      return;
+    }
+    const newKey = generateApiKey();
+    run('INSERT INTO api_keys (user_id, key, label) VALUES (?, ?, ?)', [
+      existing.id, newKey, `${trimmedName} re-registered key`,
+    ]);
+    res.status(200).json({
+      bot: { id: existing.id, name: existing.name, isBot: true, createdAt: existing.created_at },
+      apiKey: newKey,
+    });
     return;
   }
 

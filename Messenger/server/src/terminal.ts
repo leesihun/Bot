@@ -59,7 +59,7 @@ function resolveExecutable(cmdName: string): SpawnTarget {
   // 1. Absolute path that already exists
   if (path.isAbsolute(cmdName) && fs.existsSync(cmdName)) {
     return isWin
-      ? { cmd: 'cmd.exe', args: ['/k', cmdName] }
+      ? { cmd: 'cmd.exe', args: ['/c', cmdName] }
       : { cmd: cmdName, args: [] };
   }
 
@@ -71,7 +71,7 @@ function resolveExecutable(cmdName: string): SpawnTarget {
     const found = isWin ? (lines.find((l) => l.endsWith('.cmd')) || lines[0]) : lines[0];
     if (found) {
       return isWin
-        ? { cmd: 'cmd.exe', args: ['/k', `"${found}"`] }
+        ? { cmd: 'cmd.exe', args: ['/c', found] }
         : { cmd: found, args: [] };
     }
   } catch { /* not on PATH */ }
@@ -94,7 +94,7 @@ function resolveExecutable(cmdName: string): SpawnTarget {
   for (const candidate of candidates) {
     if (fs.existsSync(candidate)) {
       return isWin
-        ? { cmd: 'cmd.exe', args: ['/k', `"${candidate}"`] }
+        ? { cmd: 'cmd.exe', args: ['/c', candidate] }
         : { cmd: candidate, args: [] };
     }
   }
@@ -102,7 +102,7 @@ function resolveExecutable(cmdName: string): SpawnTarget {
   // 4. Last resort: let the shell resolve
   console.warn(`[terminal] Could not resolve '${cmdName}' — falling back to shell resolution`);
   return isWin
-    ? { cmd: 'cmd.exe', args: ['/k', cmdName] }
+    ? { cmd: 'cmd.exe', args: ['/c', cmdName] }
     : { cmd: cmdName, args: [] };
 }
 
@@ -334,6 +334,7 @@ function handle(msg) {
       if (!term) initTerm();
       if (wasSessionActive) {
         wasSessionActive = false;
+        if (term) term.clear();
         ws.send(JSON.stringify({ type: 'reconnect', cols: term?.cols || 120, rows: term?.rows || 40 }));
       } else {
         setTimeout(() => startSession(), 100);
