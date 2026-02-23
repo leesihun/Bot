@@ -1,7 +1,11 @@
 # ============================================================
 #  AIhoonbot.com - Settings
-#  Used by: start-all.sh, close-apps.sh only
+#  Used by: start-all.sh, setup-linux.sh, close-apps.sh
 # ============================================================
+
+# --- Workspace ---
+# Directory that Claude/Cursor will operate on
+WORKSPACE_DIR="/scratch0"
 
 # --- Port Settings ---
 MESSENGER_PORT=3000

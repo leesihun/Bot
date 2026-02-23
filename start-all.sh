@@ -55,6 +55,20 @@ if [ "$USE_CLOUDFLARE" = "true" ]; then
     fi
 fi
 
+# --- npm install if needed ---
+if [ ! -d "$SCRIPT_DIR/Messenger/node_modules" ]; then
+    echo "[0/5] node_modules not found. Running npm install..."
+    cd "$SCRIPT_DIR/Messenger"
+    npm install
+    if [ $? -ne 0 ]; then
+        echo "[ERROR] npm install failed."
+        read -p "Press Enter to exit..."
+        exit 1
+    fi
+    echo "[OK] npm install done."
+    echo
+fi
+
 # --- Build Messenger web client if needed ---
 if [ ! -f "$SCRIPT_DIR/Messenger/client/dist-web/index.html" ]; then
     echo "[0/5] Building Messenger web client..."
@@ -74,12 +88,19 @@ LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 # --- Start Services ---
-echo "[1/5] Starting LLM API tools server (port $LLM_API_TOOLS_PORT)..."
-cd "$SCRIPT_DIR/../LLM_API" && python3 tools_server.py > "$LOG_DIR/llm_tools.log" 2>&1 &
-sleep 2
+LLM_API_DIR="$SCRIPT_DIR/../LLM_API"
 
-echo "[2/5] Starting LLM API main server (port $LLM_API_PORT)..."
-cd "$SCRIPT_DIR/../LLM_API" && python3 run_backend.py > "$LOG_DIR/llm_api.log" 2>&1 &
+if [ -d "$LLM_API_DIR" ]; then
+    echo "[1/5] Starting LLM API tools server (port $LLM_API_TOOLS_PORT)..."
+    cd "$LLM_API_DIR" && python3 tools_server.py > "$LOG_DIR/llm_tools.log" 2>&1 &
+    sleep 2
+
+    echo "[2/5] Starting LLM API main server (port $LLM_API_PORT)..."
+    cd "$LLM_API_DIR" && python3 run_backend.py > "$LOG_DIR/llm_api.log" 2>&1 &
+else
+    echo "[1/5] LLM API not found at $LLM_API_DIR — skipping."
+    echo "[2/5] LLM API not found — skipping."
+fi
 
 echo "[3/5] Starting Messenger (port $MESSENGER_PORT)..."
 cd "$SCRIPT_DIR/Messenger" && npm run dev:server > "$LOG_DIR/messenger.log" 2>&1 &
