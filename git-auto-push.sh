@@ -9,11 +9,11 @@ if ! git diff --cached --quiet; then
 
     # Pull remote changes first (rebase to keep linear history)
     echo "Pulling remote changes..."
-    git pull --rebase
+    git pull --rebase origin main
 
-    # Push to the current branch's upstream
+    # Push to main
     echo "Pushing to remote..."
-    git push
+    git push origin main
 else
     echo "No changes to commit."
 fi
