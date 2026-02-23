@@ -86,7 +86,7 @@ else
     echo
 
     echo "  Installing Python packages..."
-    pip3 install --user \
+    pip3 install \
         -r "$SCRIPT_DIR/Hoonbot/requirements.txt" \
         -r "$SCRIPT_DIR/ClaudeCodeWrapper/requirements.txt"
     echo "  [OK] Python packages installed."

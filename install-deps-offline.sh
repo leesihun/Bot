@@ -44,7 +44,6 @@ fi
 # ---- Python ----
 echo "[2/4] Installing Python packages..."
 pip3 install \
-    --user \
     --no-index \
     --find-links="$BUNDLE/pip-packages" \
     -r "$SCRIPT_DIR/Hoonbot/requirements.txt" \
