@@ -70,21 +70,13 @@ if [ ! -f "$SCRIPT_DIR/Messenger/client/dist-web/index.html" ]; then
 fi
 
 # --- Start Services ---
-echo "[1/5] Starting LLM API tools server (port $LLM_API_TOOLS_PORT)..."
-gnome-terminal --tab --title="LLM_API Tools" -- bash -c "cd '$SCRIPT_DIR/../LLM_API' && python3 tools_server.py; exec bash"
-sleep 2
-
-echo "[2/5] Starting LLM API main server (port $LLM_API_PORT)..."
-gnome-terminal --tab --title="LLM_API" -- bash -c "cd '$SCRIPT_DIR/../LLM_API' && python3 run_backend.py; exec bash"
-
-echo "[3/5] Starting Messenger (port $MESSENGER_PORT)..."
-gnome-terminal --tab --title="Messenger" -- bash -c "cd '$SCRIPT_DIR/Messenger' && npm run dev:server; exec bash"
-
-echo "[4/5] Starting Hoonbot (port $HOONBOT_PORT)..."
-gnome-terminal --tab --title="Hoonbot" -- bash -c "cd '$SCRIPT_DIR/Hoonbot' && python3 hoonbot.py; exec bash"
-
-echo "[5/5] Starting ClaudeCodeWrapper (port $CLAUDE_WRAPPER_PORT)..."
-gnome-terminal --tab --title="ClaudeCodeWrapper" -- bash -c "cd '$SCRIPT_DIR/ClaudeCodeWrapper' && python3 run.py; exec bash"
+echo "[1-5/5] Starting all services in xfce4-terminal..."
+xfce4-terminal \
+    --tab --title="LLM_API Tools" --command="bash -c \"cd '$SCRIPT_DIR/../LLM_API' && python3 tools_server.py; exec bash\"" \
+    --tab --title="LLM_API"       --command="bash -c \"sleep 2 && cd '$SCRIPT_DIR/../LLM_API' && python3 run_backend.py; exec bash\"" \
+    --tab --title="Messenger"     --command="bash -c \"cd '$SCRIPT_DIR/Messenger' && npm run dev:server; exec bash\"" \
+    --tab --title="Hoonbot"       --command="bash -c \"cd '$SCRIPT_DIR/Hoonbot' && python3 hoonbot.py; exec bash\"" \
+    --tab --title="ClaudeCodeWrapper" --command="bash -c \"cd '$SCRIPT_DIR/ClaudeCodeWrapper' && python3 run.py; exec bash\"" &
 
 echo
 echo "Waiting for services to start..."
@@ -92,7 +84,7 @@ sleep 4
 
 if [ "$USE_CLOUDFLARE" = "true" ]; then
     echo "Starting Cloudflare Tunnel ($CLOUDFLARE_TUNNEL_NAME)..."
-    gnome-terminal --tab --title="Cloudflare Tunnel" -- bash -c "'$CLOUDFLARED_BIN' tunnel run $CLOUDFLARE_TUNNEL_NAME; exec bash"
+    xfce4-terminal --tab --title="Cloudflare Tunnel" --command="bash -c \"'$CLOUDFLARED_BIN' tunnel run $CLOUDFLARE_TUNNEL_NAME; exec bash\""
 else
     echo "Cloudflare disabled (USE_CLOUDFLARE=false in settings.txt). Skipping."
 fi
