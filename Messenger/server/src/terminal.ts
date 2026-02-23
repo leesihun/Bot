@@ -3,7 +3,13 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
-import * as pty from 'node-pty';
+
+let pty: typeof import('node-pty') | null = null;
+try {
+  pty = require('node-pty');
+} catch {
+  console.warn('[terminal] node-pty not available — terminal features disabled');
+}
 
 // ---------------------------------------------------------------------------
 // .env parser (no dotenv dependency needed)
@@ -442,7 +448,7 @@ export const OPENCODE_HTML = makeTerminalHTML({
 // Multiple WebSocket clients can attach/detach freely.
 // ---------------------------------------------------------------------------
 class PersistentSession {
-  private ptyProcess: pty.IPty | null = null;
+  private ptyProcess: import('node-pty').IPty | null = null;
   private readonly clients: Set<WebSocket> = new Set();
   private outputBuffer = '';
   private readonly MAX_BUFFER = 50_000; // chars of recent output replayed on reconnect
@@ -453,6 +459,11 @@ class PersistentSession {
 
   /** Kill any existing PTY and start a fresh one. The requesting WS is added to clients. */
   start(ws: WebSocket, workspace: string, cols: number, rows: number): void {
+    if (!pty) {
+      this.send(ws, { type: 'error', message: 'node-pty is not installed — terminal unavailable' });
+      return;
+    }
+
     this.clients.add(ws);
     if (this.ptyProcess) { try { this.ptyProcess.kill(); } catch {} this.ptyProcess = null; }
     this.outputBuffer = '';
