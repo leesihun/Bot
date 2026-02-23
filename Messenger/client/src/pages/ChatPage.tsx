@@ -127,11 +127,22 @@ export default function ChatPage() {
       );
     };
 
+    const handleMessagesCleared = (data: { roomId: number }) => {
+      setRooms((prev) =>
+        prev.map((room) =>
+          room.id === data.roomId
+            ? { ...room, lastMessage: null, unreadCount: 0 }
+            : room
+        )
+      );
+    };
+
     socket.on('new_message', handleNewMessage);
     socket.on('mention_notification', handleMentionNotification);
     socket.on('user_online_status', handleOnlineStatus);
     socket.on('room_created', handleRoomCreated);
     socket.on('member_left', handleMemberLeft);
+    socket.on('room_messages_cleared', handleMessagesCleared);
 
     return () => {
       socket.off('new_message', handleNewMessage);
@@ -139,6 +150,7 @@ export default function ChatPage() {
       socket.off('user_online_status', handleOnlineStatus);
       socket.off('room_created', handleRoomCreated);
       socket.off('member_left', handleMemberLeft);
+      socket.off('room_messages_cleared', handleMessagesCleared);
     };
   }, [socket, user, silentMode, selectedRoomId, rooms]);
 

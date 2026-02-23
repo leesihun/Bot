@@ -195,6 +195,13 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
       setPinnedMessageIds((prev) => { const s = new Set(prev); s.delete(data.messageId); return s; });
     };
 
+    const handleMessagesCleared = (data: { roomId: number }) => {
+      if (data.roomId !== room.id) return;
+      setMessages([]);
+      setPins([]);
+      setPinnedMessageIds(new Set());
+    };
+
     socket.on('new_message', handleNewMessage);
     socket.on('message_edited', handleMessageEdited);
     socket.on('message_deleted', handleMessageDeleted);
@@ -204,6 +211,7 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
     socket.on('reaction_updated', handleReactionUpdated);
     socket.on('message_pinned', handleMessagePinned);
     socket.on('message_unpinned', handleMessageUnpinned);
+    socket.on('room_messages_cleared', handleMessagesCleared);
 
     return () => {
       socket.off('new_message', handleNewMessage);
@@ -215,6 +223,7 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
       socket.off('reaction_updated', handleReactionUpdated);
       socket.off('message_pinned', handleMessagePinned);
       socket.off('message_unpinned', handleMessageUnpinned);
+      socket.off('room_messages_cleared', handleMessagesCleared);
     };
   }, [socket, room.id, user.id, scrollToBottom]);
 
@@ -532,7 +541,7 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
 
   // Leave room
   const handleLeaveRoom = () => {
-    if (!confirm('이 채팅방에서 나가시겠습니까?')) return;
+    if (!confirm('이 채팅방에서 나가시겠습니까?\n모든 대화 내용이 삭제됩니다.')) return;
     socket?.emit('leave_room_permanent', room.id);
     onLeaveRoom(room.id);
   };

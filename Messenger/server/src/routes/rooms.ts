@@ -317,7 +317,19 @@ router.post('/:id/leave', (req: Request, res: Response) => {
     return;
   }
 
+  run('DELETE FROM read_receipts WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
+  run('DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
+  run('DELETE FROM pinned_messages WHERE room_id = ?', [roomId]);
+  run('DELETE FROM messages WHERE room_id = ?', [roomId]);
   run('DELETE FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
+
+  if (ioInstance) {
+    const user = queryOne('SELECT name FROM users WHERE id = ?', [userId]);
+    const userName = user?.name || 'Unknown';
+    ioInstance.to(`room:${roomId}`).emit('room_messages_cleared', { roomId, userId, userName });
+    ioInstance.to(`room:${roomId}`).emit('member_left', { roomId, userId, userName });
+  }
+
   res.json({ success: true });
 });
 

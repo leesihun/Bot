@@ -167,4 +167,5 @@ export interface ServerToClientEvents {
   message_pinned: (data: { roomId: number; pin: PinnedMessage }) => void;
   message_unpinned: (data: { roomId: number; messageId: number }) => void;
   member_left: (data: { roomId: number; userId: number; userName: string }) => void;
+  room_messages_cleared: (data: { roomId: number; userId: number; userName: string }) => void;
 }

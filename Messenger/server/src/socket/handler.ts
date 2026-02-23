@@ -296,16 +296,21 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       io.to(`room:${roomId}`).emit('message_unpinned', { roomId, messageId });
     });
 
-    // Leave room permanently
+    // Leave room permanently and delete all messages in the room
     socket.on('leave_room_permanent', (roomId: number) => {
       const user = queryOne('SELECT name FROM users WHERE id = ?', [userId]);
+      const userName = user?.name || 'Unknown';
+
+      run('DELETE FROM read_receipts WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
+      run('DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
+      run('DELETE FROM pinned_messages WHERE room_id = ?', [roomId]);
+      run('DELETE FROM messages WHERE room_id = ?', [roomId]);
       run('DELETE FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
+
       socket.leave(`room:${roomId}`);
-      io.to(`room:${roomId}`).emit('member_left', {
-        roomId,
-        userId,
-        userName: user?.name || 'Unknown',
-      });
+
+      io.to(`room:${roomId}`).emit('room_messages_cleared', { roomId, userId, userName });
+      io.to(`room:${roomId}`).emit('member_left', { roomId, userId, userName });
     });
 
     // Disconnect
