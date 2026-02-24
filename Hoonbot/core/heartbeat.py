@@ -17,6 +17,7 @@ import os
 from datetime import datetime, timezone, timedelta
 
 import aiosqlite
+import httpx
 import config
 from core import (
     llm,
@@ -58,6 +59,8 @@ Task: {task}
 
 _HEARTBEAT_PROBE_MESSAGE = "[HEARTBEAT_INTERNAL_DECISION_PROBE]"
 _LEGACY_HEARTBEAT_PROBE_MESSAGE = "What should you do right now?"
+_HEARTBEAT_LLM_COOLDOWN_UNTIL: datetime | None = None
+_HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL: datetime | None = None
 
 
 def _load_heartbeat_checklist() -> str:
@@ -96,12 +99,18 @@ async def _run_scheduled_jobs(db: aiosqlite.Connection, local_now: datetime = No
                 {"role": "system", "content": soul},
                 {"role": "user", "content": f"Execute this scheduled task: {job['prompt']}"},
             ]
-            result = await llm.chat(messages, agent_type="chat")
+            result = await llm.chat(
+                messages,
+                agent_type="chat",
+                timeout_seconds=45,
+                max_attempts=1,
+            )
             await messenger.send_message(room_id, result)
             await hist_store.add_message(db, room_id, "assistant", result)
             is_once = bool(job["once_at"])
             await sched_store.mark_run(db, job["id"], disable_if_once=is_once)
         except Exception as exc:
+            _activate_heartbeat_llm_cooldown(exc, where="scheduled_job")
             logger.error(f"[Schedule] Job failed: {exc}", exc_info=True)
 
     if due_jobs:
@@ -123,6 +132,10 @@ async def tick(db: aiosqlite.Connection) -> None:
     room_id = config.MESSENGER_HOME_ROOM_ID
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     logger.info(f"[Heartbeat] Tick at {now}")
+
+    if _is_heartbeat_llm_cooldown_active():
+        await _report_heartbeat_cooldown_once(db, room_id)
+        return
 
     local_now = datetime.now()
     await _run_scheduled_jobs(db, local_now)
@@ -153,7 +166,12 @@ async def tick(db: aiosqlite.Connection) -> None:
             messages.extend(filtered_history[-10:])
         messages.append({"role": "user", "content": _HEARTBEAT_PROBE_MESSAGE})
 
-        raw = await llm.chat(messages, agent_type="chat")
+        raw = await llm.chat(
+            messages,
+            agent_type="chat",
+            timeout_seconds=45,
+            max_attempts=1,
+        )
         action, parsed = _parse_action(raw)
         logger.info(f"[Heartbeat] Action: {action}")
 
@@ -181,6 +199,7 @@ async def tick(db: aiosqlite.Connection) -> None:
             await _create_schedule(db, room_id, action)
 
     except Exception as exc:
+        _activate_heartbeat_llm_cooldown(exc, where="heartbeat_tick")
         logger.error(f"[Heartbeat] Tick failed: {exc}", exc_info=True)
 
 
@@ -220,9 +239,15 @@ async def _run_background_task(db: aiosqlite.Connection, room_id: int, task_desc
             {"role": "system", "content": system},
             {"role": "user", "content": task_desc},
         ]
-        result = await llm.chat(messages, agent_type="auto")
+        result = await llm.chat(
+            messages,
+            agent_type="auto",
+            timeout_seconds=90,
+            max_attempts=2,
+        )
         reply = f"✅ 작업 완료: {task_desc}\n\n{result}"
     except Exception as exc:
+        _activate_heartbeat_llm_cooldown(exc, where="background_task")
         reply = f"❌ 작업 실패: {task_desc}\n\nError: {exc}"
         logger.error(f"[Heartbeat] Task failed: {exc}", exc_info=True)
 
@@ -292,7 +317,12 @@ async def _maybe_compaction_flushes(db: aiosqlite.Connection) -> None:
                     "content": "Save important memories before older messages are cleared.",
                 },
             ]
-            raw = await llm.chat(flush_messages, agent_type="chat")
+            raw = await llm.chat(
+                flush_messages,
+                agent_type="chat",
+                timeout_seconds=45,
+                max_attempts=1,
+            )
             mem_commands = mem_store.parse_memory_commands(raw)
             for cmd in mem_commands:
                 await mem_store.save(db, cmd["key"], cmd["value"], cmd["tags"])
@@ -308,6 +338,7 @@ async def _maybe_compaction_flushes(db: aiosqlite.Connection) -> None:
                 logger.debug(f"[Heartbeat] Compaction flush for room {room_id}: nothing new to save")
 
         except Exception as exc:
+            _activate_heartbeat_llm_cooldown(exc, where="compaction_flush")
             logger.error(f"[Heartbeat] Compaction flush failed for room {room_id}: {exc}", exc_info=True)
 
 
@@ -374,3 +405,60 @@ async def _report_unstructured_heartbeat_output(
     report = f"🫀 Heartbeat 보고:\n{content}"
     await messenger.send_message(room_id, report)
     await hist_store.add_message(db, room_id, "assistant", report)
+
+
+def _is_llm_connectivity_error(exc: Exception) -> bool:
+    if isinstance(exc, httpx.RequestError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code >= 500:
+        return True
+    return False
+
+
+def _is_heartbeat_llm_cooldown_active() -> bool:
+    global _HEARTBEAT_LLM_COOLDOWN_UNTIL, _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL
+    if _HEARTBEAT_LLM_COOLDOWN_UNTIL is None:
+        return False
+    if datetime.now(timezone.utc) >= _HEARTBEAT_LLM_COOLDOWN_UNTIL:
+        _HEARTBEAT_LLM_COOLDOWN_UNTIL = None
+        _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL = None
+        return False
+    return True
+
+
+def _activate_heartbeat_llm_cooldown(exc: Exception, where: str) -> None:
+    global _HEARTBEAT_LLM_COOLDOWN_UNTIL, _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL
+    if not _is_llm_connectivity_error(exc):
+        return
+
+    cooldown_seconds = max(30, config.HEARTBEAT_LLM_COOLDOWN_SECONDS)
+    until = datetime.now(timezone.utc) + timedelta(seconds=cooldown_seconds)
+    if _HEARTBEAT_LLM_COOLDOWN_UNTIL is None or until > _HEARTBEAT_LLM_COOLDOWN_UNTIL:
+        _HEARTBEAT_LLM_COOLDOWN_UNTIL = until
+        _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL = None
+
+    logger.warning(
+        f"[Heartbeat] Activated LLM cooldown ({cooldown_seconds}s) after {where}: "
+        f"{type(exc).__name__}"
+    )
+
+
+async def _report_heartbeat_cooldown_once(db: aiosqlite.Connection, room_id: int) -> None:
+    global _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL
+    until = _HEARTBEAT_LLM_COOLDOWN_UNTIL
+    if until is None:
+        return
+    if _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL == until:
+        return
+
+    remaining = int((until - datetime.now(timezone.utc)).total_seconds())
+    if remaining < 1:
+        return
+    minutes = max(1, (remaining + 59) // 60)
+    report = (
+        f"🫀 Heartbeat 보고: LLM 연결 장애로 heartbeat LLM 호출을 "
+        f"약 {minutes}분 동안 일시 중지했어요."
+    )
+    await messenger.send_message(room_id, report)
+    await hist_store.add_message(db, room_id, "assistant", report)
+    _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL = until

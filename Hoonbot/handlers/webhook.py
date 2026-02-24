@@ -201,6 +201,7 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
 
     except Exception as exc:
         logger.error(f"[Webhook] process_message failed: {exc}", exc_info=True)
+        logger.error(f"[Webhook] LLM endpoint in use: {config.LLM_API_URL}/v1/chat/completions")
         try:
             if "Connect" in type(exc).__name__ or "Timeout" in type(exc).__name__:
                 user_msg = "⚠️ LLM 서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요."

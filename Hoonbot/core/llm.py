@@ -14,6 +14,9 @@ async def chat(
     messages: List[Dict[str, str]],
     agent_type: Optional[str] = None,
     session_id: Optional[str] = None,
+    timeout_seconds: float = 120,
+    max_attempts: int = 3,
+    base_delay: float = 2.0,
 ) -> str:
     """
     Call LLM_API chat completions and return the assistant's reply text.
@@ -31,16 +34,27 @@ async def chat(
     if session_id:
         form_data["session_id"] = session_id
 
-    async def _call():
-        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
-            resp = await client.post(
-                f"{config.LLM_API_URL}/v1/chat/completions",
-                data=form_data,
-            )
-            resp.raise_for_status()
-            return resp.json()
+    endpoint = f"{config.LLM_API_URL}/v1/chat/completions"
 
-    body = await with_retry(_call, label="LLM chat", max_attempts=3, base_delay=2.0)
+    async def _call():
+        async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
+            try:
+                resp = await client.post(endpoint, data=form_data)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as exc:
+                logger.warning(
+                    f"[LLM] Request failed endpoint={endpoint} agent={agent} "
+                    f"error={type(exc).__name__}: {exc}"
+                )
+                raise
+
+    body = await with_retry(
+        _call,
+        label=f"LLM chat ({agent})",
+        max_attempts=max_attempts,
+        base_delay=base_delay,
+    )
 
     # OpenAI-compatible response shape
     try:

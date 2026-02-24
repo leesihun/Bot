@@ -41,6 +41,10 @@ MAX_MESSAGE_LENGTH = int(os.environ.get("HOONBOT_MAX_MESSAGE_LENGTH", 2000))
 # --- Heartbeat ---
 HEARTBEAT_ENABLED = os.environ.get("HOONBOT_HEARTBEAT_ENABLED", "true").lower() == "true"
 HEARTBEAT_INTERVAL_SECONDS = int(os.environ.get("HOONBOT_HEARTBEAT_INTERVAL", 3600))
+# If LLM connection fails, heartbeat pauses proactive LLM calls for this many seconds.
+HEARTBEAT_LLM_COOLDOWN_SECONDS = int(
+    os.environ.get("HOONBOT_HEARTBEAT_LLM_COOLDOWN_SECONDS", 600)
+)
 # Active hours: heartbeat only runs between these local times (HH:MM 24h, default = always)
 HEARTBEAT_ACTIVE_START = os.environ.get("HOONBOT_HEARTBEAT_ACTIVE_START", "00:00")
 HEARTBEAT_ACTIVE_END = os.environ.get("HOONBOT_HEARTBEAT_ACTIVE_END", "23:59")
