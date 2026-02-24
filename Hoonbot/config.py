@@ -18,11 +18,16 @@ MESSENGER_HOME_ROOM_ID = int(os.environ.get("HOONBOT_HOME_ROOM_ID", 1))
 
 # --- LLM API ---
 LLM_API_PORT = int(os.environ.get("LLM_API_PORT", 10007))
-LLM_API_URL = (
-    "https://aihoonbot.com/llm"
-    if USE_CLOUDFLARE
-    else f"http://localhost:{LLM_API_PORT}"
-)
+# If set, this takes absolute priority (for remote/dedicated LLM servers).
+_llm_api_url_override = os.environ.get("LLM_API_URL", "").strip()
+if _llm_api_url_override:
+    LLM_API_URL = _llm_api_url_override.rstrip("/")
+else:
+    LLM_API_URL = (
+        "https://aihoonbot.com/llm"
+        if USE_CLOUDFLARE
+        else f"http://localhost:{LLM_API_PORT}"
+    )
 LLM_API_AGENT_TYPE = "auto"  # chat | react | plan_execute | auto
 
 # --- Storage ---

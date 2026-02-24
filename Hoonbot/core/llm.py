@@ -32,7 +32,7 @@ async def chat(
         form_data["session_id"] = session_id
 
     async def _call():
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=120, trust_env=False) as client:
             resp = await client.post(
                 f"{config.LLM_API_URL}/v1/chat/completions",
                 data=form_data,

@@ -46,6 +46,7 @@ Respond ONLY with a single JSON object — no prose before or after:
   {{"action": "schedule", "name": "<short_name>", "at": "<YYYY-MM-DD HH:MM>", "prompt": "<what to do>"}}
 
 Be conservative. Most ticks should return {{"action": "none"}}.
+Never return the internal probe token as a user-visible message.
 """
 
 _TASK_EXECUTOR_SYSTEM = """\
@@ -54,6 +55,9 @@ summary of the result. Use your tools (web search, code execution, etc.) as need
 
 Task: {task}
 """
+
+_HEARTBEAT_PROBE_MESSAGE = "[HEARTBEAT_INTERNAL_DECISION_PROBE]"
+_LEGACY_HEARTBEAT_PROBE_MESSAGE = "What should you do right now?"
 
 
 def _load_heartbeat_checklist() -> str:
@@ -145,20 +149,30 @@ async def tick(db: aiosqlite.Connection) -> None:
 
         messages = [{"role": "system", "content": system_with_ctx}]
         if history:
-            messages.extend(history[-10:])
-        messages.append({"role": "user", "content": "What should you do right now?"})
+            filtered_history = _filter_internal_probe_history(history)
+            messages.extend(filtered_history[-10:])
+        messages.append({"role": "user", "content": _HEARTBEAT_PROBE_MESSAGE})
 
         raw = await llm.chat(messages, agent_type="chat")
-        action = _parse_action(raw)
+        action, parsed = _parse_action(raw)
         logger.info(f"[Heartbeat] Action: {action}")
+
+        if not parsed:
+            await _report_unstructured_heartbeat_output(db, room_id, raw)
+            return
 
         if action["action"] == "none":
             return
         elif action["action"] == "message":
             content = action.get("content", "").strip()
-            if content:
+            if content and not _is_internal_probe_echo(content):
                 await messenger.send_message(room_id, content)
                 await hist_store.add_message(db, room_id, "assistant", content)
+            elif content:
+                logger.warning("[Heartbeat] Ignoring leaked internal probe echo from model output.")
+                notice = "🫀 Heartbeat 보고: 내부 프로브 문구가 감지되어 해당 출력은 차단했어요."
+                await messenger.send_message(room_id, notice)
+                await hist_store.add_message(db, room_id, "assistant", notice)
         elif action["action"] == "task":
             task_desc = action.get("content", "").strip()
             if task_desc:
@@ -297,15 +311,66 @@ async def _maybe_compaction_flushes(db: aiosqlite.Connection) -> None:
             logger.error(f"[Heartbeat] Compaction flush failed for room {room_id}: {exc}", exc_info=True)
 
 
-def _parse_action(raw: str) -> dict:
-    """Extract the JSON action from the LLM response."""
+def _parse_action(raw: str) -> tuple[dict, bool]:
+    """Extract the JSON action from the LLM response.
+
+    Returns:
+      (action, parsed_ok)
+    """
     raw = raw.strip()
     start = raw.find("{")
     end = raw.rfind("}") + 1
     if start != -1 and end > start:
         try:
-            return json.loads(raw[start:end])
+            return json.loads(raw[start:end]), True
         except json.JSONDecodeError:
             pass
     logger.warning(f"[Heartbeat] Could not parse action from: {raw!r}")
-    return {"action": "none"}
+    return {"action": "none"}, False
+
+
+def _normalize_text_for_compare(text: str) -> str:
+    return " ".join(text.strip().lower().split())
+
+
+def _is_internal_probe_echo(content: str) -> bool:
+    normalized = _normalize_text_for_compare(content)
+    return normalized in {
+        _normalize_text_for_compare(_HEARTBEAT_PROBE_MESSAGE),
+        _normalize_text_for_compare(_LEGACY_HEARTBEAT_PROBE_MESSAGE),
+    }
+
+
+def _filter_internal_probe_history(history: list[dict]) -> list[dict]:
+    """Remove leaked internal probe messages from context to prevent self-loops."""
+    cleaned = []
+    for msg in history:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "assistant" and _is_internal_probe_echo(content):
+            continue
+        cleaned.append(msg)
+    return cleaned
+
+
+async def _report_unstructured_heartbeat_output(
+    db: aiosqlite.Connection, room_id: int, raw_output: str
+) -> None:
+    """Report non-JSON heartbeat output to the user unless it is internal probe text."""
+    content = raw_output.strip()
+    if not content:
+        return
+
+    if _is_internal_probe_echo(content):
+        notice = "🫀 Heartbeat 보고: 내부 프로브 응답만 감지되어 사용자 출력은 생략했어요."
+        await messenger.send_message(room_id, notice)
+        await hist_store.add_message(db, room_id, "assistant", notice)
+        return
+
+    max_len = max(200, config.MAX_MESSAGE_LENGTH - 100)
+    if len(content) > max_len:
+        content = content[:max_len].rstrip() + "\n...(truncated)"
+
+    report = f"🫀 Heartbeat 보고:\n{content}"
+    await messenger.send_message(room_id, report)
+    await hist_store.add_message(db, room_id, "assistant", report)

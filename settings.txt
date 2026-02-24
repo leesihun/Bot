@@ -29,6 +29,9 @@ OPENCODE_CMD=opencode
 # --- LLM API ---
 LLM_API_PORT=10007
 LLM_API_TOOLS_PORT=10007
+# Optional: explicit LLM API base URL for remote server (overrides localhost/Cloudflare logic)
+# Example: LLM_API_URL="http://192.168.0.50:10007"
+# LLM_API_URL=""
 
 # --- Hoonbot ---
 HOONBOT_PORT=3939
