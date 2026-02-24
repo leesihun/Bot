@@ -105,7 +105,7 @@ else
 fi
 
 echo "[3/5] Starting Messenger (port $MESSENGER_PORT)..."
-cd "$SCRIPT_DIR/Messenger" && npm run dev:server > "$LOG_DIR/messenger.log" 2>&1 &
+cd "$SCRIPT_DIR/Messenger" && PORT="$MESSENGER_PORT" npm run dev:server > "$LOG_DIR/messenger.log" 2>&1 &
 
 echo "Waiting for Messenger health endpoint..."
 MESSENGER_READY=false

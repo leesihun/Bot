@@ -25,6 +25,10 @@ router.post('/login', (req: Request, res: Response) => {
   let user = queryOne('SELECT * FROM users WHERE name = ?', [trimmedName]);
 
   if (user) {
+    if (user.is_bot) {
+      res.status(403).json({ error: '이 이름은 봇 계정입니다. 다른 이름으로 로그인해주세요.' });
+      return;
+    }
     // Update IP if changed (user may connect from a different machine)
     if (user.ip !== cleanIp) {
       run("UPDATE users SET ip = ?, updated_at = datetime('now') WHERE id = ?", [cleanIp, user.id]);
@@ -45,6 +49,7 @@ router.post('/login', (req: Request, res: Response) => {
       id: user.id,
       ip: user.ip,
       name: user.name,
+      isBot: !!user.is_bot,
       createdAt: user.created_at,
       updatedAt: user.updated_at,
     },
@@ -59,6 +64,7 @@ router.get('/users', (_req: Request, res: Response) => {
       id: u.id,
       ip: u.ip,
       name: u.name,
+      isBot: !!u.is_bot,
       createdAt: u.created_at,
       updatedAt: u.updated_at,
     }))
@@ -72,12 +78,13 @@ router.get('/check', (req: Request, res: Response) => {
 
   const user = queryOne('SELECT * FROM users WHERE ip = ? ORDER BY updated_at DESC LIMIT 1', [cleanIp]);
 
-  if (user) {
+  if (user && !user.is_bot) {
     res.json({
       user: {
         id: user.id,
         ip: user.ip,
         name: user.name,
+        isBot: !!user.is_bot,
         createdAt: user.created_at,
         updatedAt: user.updated_at,
       },

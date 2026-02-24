@@ -92,7 +92,9 @@ export default function NewRoomModal({ users, currentUser, onClose, onCreated }:
         <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg mb-4">
           {otherUsers.length === 0 ? (
             <div className="p-4 text-center text-gray-400 text-sm">
-              다른 사용자가 없습니다.
+              {currentUser.isBot
+                ? '현재 봇 계정으로 로그인되어 있습니다. 사람 계정으로 다시 로그인해주세요.'
+                : '다른 사용자가 없습니다.'}
             </div>
           ) : (
             otherUsers.map((u) => (
@@ -118,7 +120,10 @@ export default function NewRoomModal({ users, currentUser, onClose, onCreated }:
                 <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
                   {u.name.charAt(0).toUpperCase()}
                 </div>
-                <span className="text-sm text-gray-700">{u.name}</span>
+                <span className="text-sm text-gray-700">
+                  {u.name}
+                  {u.isBot ? ' (BOT)' : ''}
+                </span>
               </label>
             ))
           )}
