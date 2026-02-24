@@ -176,7 +176,7 @@ async def tick(db: aiosqlite.Connection) -> None:
         logger.info(f"[Heartbeat] Action: {action}")
 
         if not parsed:
-            await _report_unstructured_heartbeat_output(db, room_id, raw)
+            logger.warning(f"[Heartbeat] Unstructured output, skipping silently: {raw!r}")
             return
 
         if action["action"] == "none":
@@ -188,9 +188,6 @@ async def tick(db: aiosqlite.Connection) -> None:
                 await hist_store.add_message(db, room_id, "assistant", content)
             elif content:
                 logger.warning("[Heartbeat] Ignoring leaked internal probe echo from model output.")
-                notice = "🫀 Heartbeat 보고: 내부 프로브 문구가 감지되어 해당 출력은 차단했어요."
-                await messenger.send_message(room_id, notice)
-                await hist_store.add_message(db, room_id, "assistant", notice)
         elif action["action"] == "task":
             task_desc = action.get("content", "").strip()
             if task_desc:
@@ -383,28 +380,6 @@ def _filter_internal_probe_history(history: list[dict]) -> list[dict]:
         cleaned.append(msg)
     return cleaned
 
-
-async def _report_unstructured_heartbeat_output(
-    db: aiosqlite.Connection, room_id: int, raw_output: str
-) -> None:
-    """Report non-JSON heartbeat output to the user unless it is internal probe text."""
-    content = raw_output.strip()
-    if not content:
-        return
-
-    if _is_internal_probe_echo(content):
-        notice = "🫀 Heartbeat 보고: 내부 프로브 응답만 감지되어 사용자 출력은 생략했어요."
-        await messenger.send_message(room_id, notice)
-        await hist_store.add_message(db, room_id, "assistant", notice)
-        return
-
-    max_len = max(200, config.MAX_MESSAGE_LENGTH - 100)
-    if len(content) > max_len:
-        content = content[:max_len].rstrip() + "\n...(truncated)"
-
-    report = f"🫀 Heartbeat 보고:\n{content}"
-    await messenger.send_message(room_id, report)
-    await hist_store.add_message(db, room_id, "assistant", report)
 
 
 def _is_llm_connectivity_error(exc: Exception) -> bool:

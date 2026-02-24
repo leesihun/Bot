@@ -44,7 +44,7 @@ export default function LoginPage() {
           <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-white font-bold text-2xl mx-auto mb-4 shadow-lg shadow-blue-600/30">
             심
           </div>
-          <h1 className="text-3xl font-bold text-gray-800">Messenger: 심심이</h1>
+          <h1 className="text-3xl font-bold text-gray-800">Messenger</h1>
           <p className="text-gray-500 mt-2">Messenger & File Manager</p>
         </div>
 

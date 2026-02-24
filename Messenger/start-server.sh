@@ -1,13 +1,13 @@
 #!/bin/bash
-# Messenger: 심심이 Server - 수동 시작 스크립트
+# Messenger: Server - 수동 시작 스크립트
 cd "$(dirname "$0")"
 
 if [ -f "./server/dist/huni-server" ]; then
-  echo "🚀 Messenger: 심심이 Server 시작..."
+  echo "🚀 Messenger: Server 시작..."
   cd server/dist
   PORT=${PORT:-3000} ./huni-server
 elif [ -f "./server/dist/server.cjs" ]; then
-  echo "🚀 Messenger: 심심이 Server 시작 (Node.js 모드)..."
+  echo "🚀 Messenger: Server 시작 (Node.js 모드)..."
   cd server/dist
   PORT=${PORT:-3000} node server.cjs
 else

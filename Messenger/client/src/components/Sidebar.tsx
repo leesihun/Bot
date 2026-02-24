@@ -60,7 +60,7 @@ export default function Sidebar({
       {/* Header */}
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center justify-between mb-3">
-          <h1 className="text-xl font-bold text-gray-800">Messenger: 심심이</h1>
+          <h1 className="text-xl font-bold text-gray-800">Messenger</h1>
           <div className="flex items-center gap-1">
             <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
           </div>

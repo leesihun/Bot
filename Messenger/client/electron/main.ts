@@ -26,7 +26,7 @@ function createWindow() {
       nodeIntegration: false,
     },
     icon: getIconPath(),
-    title: 'Messenger: 심심이',
+    title: 'Messenger',
     show: false,
   });
 

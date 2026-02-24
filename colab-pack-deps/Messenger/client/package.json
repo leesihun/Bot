@@ -2,7 +2,7 @@
   "name": "client",
   "version": "1.0.0",
   "private": true,
-  "description": "사내 실시간 채팅 메신저 심심이",
+  "description": "사내 실시간 채팅 메신저",
   "author": "Huni",
   "type": "module",
   "main": "dist-electron/main.js",
@@ -38,7 +38,7 @@
   "build": {
     "appId": "com.messenger.simsimi",
     "electronVersion": "33.4.11",
-    "productName": "Messenger 심심이",
+    "productName": "Messenger",
     "directories": {
       "buildResources": "build"
     },
@@ -52,7 +52,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Messenger 심심이",
+      "shortcutName": "Messenger",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerSidebar": null,

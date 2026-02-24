@@ -1,5 +1,5 @@
 #!/bin/bash
-# Messenger: 심심이 Server - Ubuntu Setup Script
+# Messenger: Server - Ubuntu Setup Script
 # 이 스크립트는 이미 빌드된 서버를 Ubuntu에 배포합니다.
 # Node.js/npm 설치 불필요 - 단일 실행 파일
 
@@ -10,7 +10,7 @@ INSTALL_DIR="/opt/huni-messenger"
 SERVICE_NAME="huni-messenger"
 
 echo "=========================================="
-echo "  Messenger: 심심이 Server 설치"
+echo "  Messenger: Server 설치"
 echo "=========================================="
 
 # Check if running as root
@@ -57,10 +57,10 @@ cd "$(dirname "$0")"
 export PORT=${PORT:-3000}
 
 if [ -f "./huni-server" ]; then
-  echo "🚀 Messenger: 심심이 Server 시작 (port: $PORT)"
+  echo "🚀 Messenger: Server 시작 (port: $PORT)"
   ./huni-server
 elif [ -f "./server.cjs" ]; then
-  echo "🚀 Messenger: 심심이 Server 시작 (Node.js 모드, port: $PORT)"
+  echo "🚀 Messenger: Server 시작 (Node.js 모드, port: $PORT)"
   node ./server.cjs
 else
   echo "❌ 서버 실행 파일을 찾을 수 없습니다."
@@ -73,7 +73,7 @@ chmod +x "$INSTALL_DIR/start.sh"
 echo "[4/4] systemd 서비스 등록..."
 cat > "/etc/systemd/system/${SERVICE_NAME}.service" << SERVICEEOF
 [Unit]
-Description=Messenger: 심심이 Server
+Description=Messenger: Server
 After=network.target
 
 [Service]
