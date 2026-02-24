@@ -126,7 +126,14 @@ async def lifespan(app: FastAPI):
         messenger.set_api_key(saved_key)
         logger.info("[Messenger] Restored API key from disk")
     else:
-        key = await messenger.register_bot(config.MESSENGER_BOT_NAME)
+        logger.info(f"[Messenger] Base URL: {config.MESSENGER_URL}")
+        key = await with_retry(
+            messenger.register_bot,
+            config.MESSENGER_BOT_NAME,
+            max_attempts=6,
+            base_delay=1.0,
+            label="Messenger bot registration",
+        )
         messenger.set_api_key(key)
         _save_key(key)
         logger.info("[Messenger] Bot registered and key saved")
@@ -135,7 +142,6 @@ async def lifespan(app: FastAPI):
     webhook_host = "aihoonbot.com" if config.USE_CLOUDFLARE else "localhost"
     webhook_scheme = "https" if config.USE_CLOUDFLARE else "http"
     webhook_url = f"{webhook_scheme}://{webhook_host}:{config.HOONBOT_PORT}/webhook"
-    logger.info(f"[Messenger] Base URL: {config.MESSENGER_URL}")
     logger.info(f"[Messenger] Webhook target: {webhook_url}")
     try:
         await with_retry(

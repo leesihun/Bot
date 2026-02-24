@@ -14,7 +14,9 @@ if [ ! -f "$SETTINGS" ]; then
     read -p "Press Enter to exit..."
     exit 1
 fi
+set -a
 source "$SETTINGS"
+set +a
 
 # --- Required: Python3 ---
 if ! command -v python3 &> /dev/null; then
@@ -104,6 +106,22 @@ fi
 
 echo "[3/5] Starting Messenger (port $MESSENGER_PORT)..."
 cd "$SCRIPT_DIR/Messenger" && npm run dev:server > "$LOG_DIR/messenger.log" 2>&1 &
+
+echo "Waiting for Messenger health endpoint..."
+MESSENGER_READY=false
+for i in {1..20}; do
+    if curl -fsS "http://localhost:$MESSENGER_PORT/health" > /dev/null 2>&1; then
+        MESSENGER_READY=true
+        break
+    fi
+    sleep 1
+done
+if [ "$MESSENGER_READY" != "true" ]; then
+    echo "[ERROR] Messenger did not become ready on http://localhost:$MESSENGER_PORT/health"
+    echo "        Check logs at $LOG_DIR/messenger.log"
+    read -p "Press Enter to exit..."
+    exit 1
+fi
 
 echo "[4/5] Starting Hoonbot (port $HOONBOT_PORT)..."
 cd "$SCRIPT_DIR/Hoonbot" && python3 hoonbot.py > "$LOG_DIR/hoonbot.log" 2>&1 &
