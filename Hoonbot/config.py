@@ -3,17 +3,26 @@ import os
 # --- Hoonbot server ---
 HOONBOT_PORT = int(os.environ.get("HOONBOT_PORT", 3939))
 HOONBOT_HOST = "0.0.0.0"
+USE_CLOUDFLARE = os.environ.get("USE_CLOUDFLARE", "false").lower() == "true"
 
 # --- Messenger ---
 MESSENGER_PORT = int(os.environ.get("MESSENGER_PORT", 3000))
-MESSENGER_URL = f"http://10.198.112.203:{MESSENGER_PORT}"
+MESSENGER_URL = (
+    "https://aihoonbot.com"
+    if USE_CLOUDFLARE
+    else f"http://localhost:{MESSENGER_PORT}"
+)
 MESSENGER_BOT_NAME = "Hoonbot"
 MESSENGER_API_KEY = ""  # Populated at runtime after bot registration; persisted in DB
 MESSENGER_HOME_ROOM_ID = int(os.environ.get("HOONBOT_HOME_ROOM_ID", 1))
 
 # --- LLM API ---
 LLM_API_PORT = int(os.environ.get("LLM_API_PORT", 10007))
-LLM_API_URL = f"http://10.198.112.203:{LLM_API_PORT}"
+LLM_API_URL = (
+    "https://aihoonbot.com/llm"
+    if USE_CLOUDFLARE
+    else f"http://localhost:{LLM_API_PORT}"
+)
 LLM_API_AGENT_TYPE = "auto"  # chat | react | plan_execute | auto
 
 # --- Storage ---

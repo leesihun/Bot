@@ -130,7 +130,9 @@ async def lifespan(app: FastAPI):
         logger.info("[Messenger] Bot registered and key saved")
 
     # --- Webhook subscription ---
-    webhook_url = f"http://10.198.112.203:{config.HOONBOT_PORT}/webhook"
+    webhook_host = "aihoonbot.com" if config.USE_CLOUDFLARE else "localhost"
+    webhook_scheme = "https" if config.USE_CLOUDFLARE else "http"
+    webhook_url = f"{webhook_scheme}://{webhook_host}:{config.HOONBOT_PORT}/webhook"
     await messenger.register_webhook(webhook_url, ["new_message"])
 
     # --- Heartbeat ---
