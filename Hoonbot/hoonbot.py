@@ -14,6 +14,7 @@ import os
 from contextlib import asynccontextmanager
 
 import aiosqlite
+import httpx
 import uvicorn
 from fastapi import FastAPI
 
@@ -136,14 +137,37 @@ async def lifespan(app: FastAPI):
     webhook_url = f"{webhook_scheme}://{webhook_host}:{config.HOONBOT_PORT}/webhook"
     logger.info(f"[Messenger] Base URL: {config.MESSENGER_URL}")
     logger.info(f"[Messenger] Webhook target: {webhook_url}")
-    await with_retry(
-        messenger.register_webhook,
-        webhook_url,
-        ["new_message"],
-        max_attempts=6,
-        base_delay=1.0,
-        label="Messenger webhook registration",
-    )
+    try:
+        await with_retry(
+            messenger.register_webhook,
+            webhook_url,
+            ["new_message"],
+            max_attempts=6,
+            base_delay=1.0,
+            label="Messenger webhook registration",
+        )
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 401:
+            raise
+        logger.warning("[Messenger] API key unauthorized, re-registering bot")
+        key = await with_retry(
+            messenger.register_bot,
+            config.MESSENGER_BOT_NAME,
+            max_attempts=6,
+            base_delay=1.0,
+            label="Messenger bot registration",
+        )
+        messenger.set_api_key(key)
+        _save_key(key)
+        logger.info("[Messenger] Bot key refreshed and saved")
+        await with_retry(
+            messenger.register_webhook,
+            webhook_url,
+            ["new_message"],
+            max_attempts=6,
+            base_delay=1.0,
+            label="Messenger webhook registration (after key refresh)",
+        )
 
     # --- Heartbeat ---
     if config.HEARTBEAT_ENABLED:
