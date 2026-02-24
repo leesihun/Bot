@@ -33,7 +33,7 @@ async def register_bot(name: str) -> str:
     If the bot already exists, Messenger returns a fresh key for it (idempotent).
     """
     global _bot_id
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
         resp = await client.post(
             f"{config.MESSENGER_URL}/api/bots",
             json={"name": name},
@@ -48,7 +48,7 @@ async def register_bot(name: str) -> str:
 
 async def register_webhook(url: str, events: List[str]) -> None:
     """Subscribe to Messenger events. Idempotent — existing webhooks with same URL are reused."""
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
         # Check existing webhooks first
         resp = await client.get(
             f"{config.MESSENGER_URL}/api/webhooks",
@@ -102,7 +102,7 @@ async def send_message(room_id: int, content: str) -> None:
     chunks = _split_message(content, config.MAX_MESSAGE_LENGTH)
     for chunk in chunks:
         async def _send(c=chunk):
-            async with httpx.AsyncClient(timeout=15) as client:
+            async with httpx.AsyncClient(timeout=15, trust_env=False) as client:
                 resp = await client.post(
                     f"{config.MESSENGER_URL}/api/send-message",
                     headers=_headers(),
@@ -115,7 +115,7 @@ async def send_message(room_id: int, content: str) -> None:
 
 async def send_typing(room_id: int) -> None:
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
             await client.post(
                 f"{config.MESSENGER_URL}/api/typing",
                 headers=_headers(),
@@ -127,7 +127,7 @@ async def send_typing(room_id: int) -> None:
 
 async def stop_typing(room_id: int) -> None:
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
             await client.post(
                 f"{config.MESSENGER_URL}/api/stop-typing",
                 headers=_headers(),
@@ -139,7 +139,7 @@ async def stop_typing(room_id: int) -> None:
 
 async def get_bot_info() -> Optional[dict]:
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             resp = await client.get(
                 f"{config.MESSENGER_URL}/api/bots/me",
                 headers=_headers(),
@@ -154,7 +154,7 @@ async def get_bot_info() -> Optional[dict]:
 async def get_rooms(bot_user_id: int) -> list:
     """Fetch rooms the bot belongs to."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             resp = await client.get(
                 f"{config.MESSENGER_URL}/api/rooms",
                 headers=_headers(),
@@ -170,7 +170,7 @@ async def get_rooms(bot_user_id: int) -> list:
 async def get_room_messages(room_id: int, limit: int = 20) -> list:
     """Fetch recent messages from a room (oldest-first order)."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             resp = await client.get(
                 f"{config.MESSENGER_URL}/api/messages/{room_id}",
                 headers=_headers(),
