@@ -8,7 +8,7 @@
 WORKSPACE_DIR="/scratch0"
 
 # --- Port Settings ---
-MESSENGER_PORT=3000
+MESSENGER_PORT=10007
 CLAUDE_WRAPPER_PORT=8000
 
 # --- Cloudflare Tunnel ---

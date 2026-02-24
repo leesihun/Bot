@@ -18,6 +18,12 @@ set -a
 source "$SETTINGS"
 set +a
 
+# --- Clean up stale processes from previous runs ---
+pkill -f "npm run dev:server" 2>/dev/null || true
+pkill -f "tsx watch src/index.ts" 2>/dev/null || true
+pkill -f "python3 hoonbot.py" 2>/dev/null || true
+pkill -f "python hoonbot.py" 2>/dev/null || true
+
 # --- Required: Python3 ---
 if ! command -v python3 &> /dev/null; then
     echo "[ERROR] Python is not installed or not in PATH."
