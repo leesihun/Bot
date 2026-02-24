@@ -25,6 +25,7 @@ from core import scheduler
 from core import heartbeat
 from core import scheduled as sched_store
 from core import status_file
+from core.retry import with_retry
 from handlers.health import router as health_router
 from handlers.webhook import router as webhook_router, set_db, process_message
 
@@ -133,7 +134,16 @@ async def lifespan(app: FastAPI):
     webhook_host = "aihoonbot.com" if config.USE_CLOUDFLARE else "localhost"
     webhook_scheme = "https" if config.USE_CLOUDFLARE else "http"
     webhook_url = f"{webhook_scheme}://{webhook_host}:{config.HOONBOT_PORT}/webhook"
-    await messenger.register_webhook(webhook_url, ["new_message"])
+    logger.info(f"[Messenger] Base URL: {config.MESSENGER_URL}")
+    logger.info(f"[Messenger] Webhook target: {webhook_url}")
+    await with_retry(
+        messenger.register_webhook,
+        webhook_url,
+        ["new_message"],
+        max_attempts=6,
+        base_delay=1.0,
+        label="Messenger webhook registration",
+    )
 
     # --- Heartbeat ---
     if config.HEARTBEAT_ENABLED:
