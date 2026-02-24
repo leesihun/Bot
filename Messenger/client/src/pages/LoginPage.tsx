@@ -5,7 +5,7 @@ export default function LoginPage() {
   const { login } = useAuth();
 
   const [serverUrl, setServerUrl] = useState(
-    () => localStorage.getItem('huni_server_url') || ''
+    () => localStorage.getItem('huni_server_url') || window.location.origin
   );
   const [name, setName] = useState('');
   const [error, setError] = useState('');
