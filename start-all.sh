@@ -88,7 +88,7 @@ LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 
 # --- Start Services ---
-LLM_API_DIR="$SCRIPT_DIR/../LLM_API"
+LLM_API_DIR="$SCRIPT_DIR/../LLM_unified"
 
 if [ -d "$LLM_API_DIR" ]; then
     echo "[1/5] Starting LLM API tools server (port $LLM_API_TOOLS_PORT)..."
