@@ -30,7 +30,6 @@ if [ ! -f "$MESSENGER_CLIENT_PKG" ]; then
     echo "        Re-copy project files, including Messenger/client/package.json."
     exit 1
 fi
-
 echo "=============================="
 echo "  Installing offline deps"
 echo "=============================="
