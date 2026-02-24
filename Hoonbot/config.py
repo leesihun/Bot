@@ -12,7 +12,7 @@ MESSENGER_URL = (
     if USE_CLOUDFLARE
     else f"http://localhost:{MESSENGER_PORT}"
 )
-MESSENGER_BOT_NAME = "Hoonbot"
+MESSENGER_BOT_NAME = os.environ.get("HOONBOT_BOT_NAME", "Hoonbot")
 MESSENGER_API_KEY = ""  # Populated at runtime after bot registration; persisted in DB
 MESSENGER_HOME_ROOM_ID = int(os.environ.get("HOONBOT_HOME_ROOM_ID", 1))
 

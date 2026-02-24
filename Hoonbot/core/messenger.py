@@ -30,7 +30,8 @@ def _headers() -> dict:
 async def register_bot(name: str) -> str:
     """
     Register Hoonbot with Messenger and return its API key.
-    If the bot already exists, Messenger returns a fresh key for it (idempotent).
+    If a bot with the same name already exists, Messenger returns a fresh key.
+    If a non-bot user has the same name, Messenger returns 409.
     """
     global _bot_id
     async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
@@ -38,6 +39,12 @@ async def register_bot(name: str) -> str:
             f"{config.MESSENGER_URL}/api/bots",
             json={"name": name},
         )
+        if resp.status_code == 409:
+            raise RuntimeError(
+                f'Messenger bot name conflict for "{name}". '
+                "A non-bot user already has this name. "
+                "Set HOONBOT_BOT_NAME to a unique bot name."
+            )
         resp.raise_for_status()
         data = resp.json()
         key = data.get("apiKey") or data.get("key") or data.get("api_key", "")
