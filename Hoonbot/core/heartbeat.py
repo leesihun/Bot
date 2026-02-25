@@ -26,15 +26,13 @@ from core import (
     history as hist_store,
     scheduled as sched_store,
     status_file,
-    sysinfo,
+    context_file,
     daily_log,
     notify,
     skills as skills_mod,
 )
 
 logger = logging.getLogger(__name__)
-
-_HEARTBEAT_PATH = os.path.join(os.path.dirname(config.SOUL_PATH), "HEARTBEAT.md")
 
 _HEARTBEAT_SYSTEM = """\
 You are Hoonbot running an autonomous background tick. It is now {datetime}.
@@ -66,15 +64,6 @@ _HEARTBEAT_PROBE_MESSAGE = 'Based on the context above, respond with ONLY a JSON
 _LEGACY_HEARTBEAT_PROBE_MESSAGE = "What should you do right now?"
 _HEARTBEAT_LLM_COOLDOWN_UNTIL: datetime | None = None
 _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL: datetime | None = None
-
-
-def _load_heartbeat_checklist() -> str:
-    """Load HEARTBEAT.md. Returns empty string if not found."""
-    try:
-        with open(_HEARTBEAT_PATH, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return ""
 
 
 def _is_active_hours() -> bool:
@@ -152,26 +141,11 @@ async def tick() -> None:
     await _maybe_compaction_flushes()
 
     try:
-        memory_ctx = await mem_store.format_for_prompt(None)
-        daily_logs_ctx = daily_log.load_recent_logs(days=3)
+        ctx = await context_file.refresh()
         history = await hist_store.get_history(room_id)
-        schedule_ctx = await _format_schedules()
-        sysinfo_ctx = sysinfo.get_system_info()
-        checklist = _load_heartbeat_checklist()
 
         system = _HEARTBEAT_SYSTEM.format(datetime=now)
-        context_parts = [system]
-        if checklist:
-            context_parts.append(checklist)
-        if memory_ctx:
-            context_parts.append(memory_ctx)
-        if daily_logs_ctx:
-            context_parts.append(daily_logs_ctx)
-        if schedule_ctx:
-            context_parts.append(schedule_ctx)
-        if sysinfo_ctx:
-            context_parts.append(sysinfo_ctx)
-        system_with_ctx = "\n\n".join(context_parts)
+        system_with_ctx = system + "\n\n" + ctx if ctx else system
 
         messages = [{"role": "system", "content": system_with_ctx}]
         if history:
@@ -319,19 +293,6 @@ def _strip_llm_commands(raw: str) -> str:
     text = daily_log.strip_daily_log_commands(text)
     text = notify.strip_notify_commands(text)
     return text.strip()
-
-
-async def _format_schedules() -> str:
-    """Format current scheduled jobs for heartbeat context."""
-    jobs = await sched_store.list_jobs()
-    if not jobs:
-        return ""
-    lines = ["## Current Scheduled Jobs\n"]
-    for j in jobs:
-        schedule = j["cron"] if j["cron"] else f"once at {j['once_at']}"
-        lr = f", last ran {j['last_run'][:16]}" if j["last_run"] else ""
-        lines.append(f"- #{j['id']} {j['name']}: {schedule} → {j['prompt']}{lr}")
-    return "\n".join(lines)
 
 
 async def _maybe_compaction_flushes() -> None:
