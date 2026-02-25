@@ -16,6 +16,7 @@ import json
 import os
 import re
 import logging
+from datetime import datetime
 from typing import List, Optional, Union
 
 import config
@@ -26,8 +27,12 @@ _DATA_DIR = os.path.dirname(config.DB_PATH)
 MEMORY_FILE_PATH = os.path.join(_DATA_DIR, "memory.md")
 _STATE_FILE = os.path.join(_DATA_DIR, "state.json")
 
-# Regex to parse one bullet line: - **key**: value [optional tags]
-_LINE_RE = re.compile(r"^- \*\*(.+?)\*\*: (.+?)(?:\s+\[([^\]]*)\])?$")
+# Regex to parse one bullet line:
+#   - **key** _(YYYY-MM-DD HH:MM)_: value [optional tags]
+# Timestamp part is optional for backwards compatibility.
+_LINE_RE = re.compile(
+    r"^- \*\*(.+?)\*\*(?:\s+_\(([^)]+)\)_)?: (.+?)(?:\s+\[([^\]]*)\])?$"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -42,8 +47,9 @@ def save(key: str, value: str, tags: Union[List[str], str] = "") -> None:
     else:
         tags_str = tags or ""
 
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     entries = _read_entries()
-    entries[key] = {"value": value.strip(), "tags": tags_str}
+    entries[key] = {"value": value.strip(), "tags": tags_str, "ts": ts}
     _write_entries(entries)
     logger.info(f"[MemoryFile] Saved: {key!r} = {value!r}")
 
@@ -71,9 +77,12 @@ def load() -> str:
 
 
 def list_all() -> List[dict]:
-    """Return all entries as a list of dicts with keys: key, value, tags."""
+    """Return all entries as a list of dicts with keys: key, value, tags, ts."""
     entries = _read_entries()
-    return [{"key": k, "value": v["value"], "tags": v["tags"]} for k, v in entries.items()]
+    return [
+        {"key": k, "value": v["value"], "tags": v["tags"], "ts": v.get("ts", "")}
+        for k, v in entries.items()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +119,7 @@ def save_state(key: str, value: str) -> None:
 
 
 def _read_entries() -> dict:
-    """Parse memory.md into an ordered dict {key: {value, tags}}."""
+    """Parse memory.md into an ordered dict {key: {value, tags, ts}}."""
     entries: dict = {}
     try:
         with open(MEMORY_FILE_PATH, "r", encoding="utf-8") as f:
@@ -118,9 +127,10 @@ def _read_entries() -> dict:
                 m = _LINE_RE.match(line.strip())
                 if m:
                     key = m.group(1).strip()
-                    value = m.group(2).strip()
-                    tags = (m.group(3) or "").strip()
-                    entries[key] = {"value": value, "tags": tags}
+                    ts = (m.group(2) or "").strip()
+                    value = m.group(3).strip()
+                    tags = (m.group(4) or "").strip()
+                    entries[key] = {"value": value, "tags": tags, "ts": ts}
     except FileNotFoundError:
         pass
     return entries
@@ -131,7 +141,8 @@ def _write_entries(entries: dict) -> None:
     os.makedirs(_DATA_DIR, exist_ok=True)
     lines = ["## Persistent Memory\n"]
     for key, entry in entries.items():
+        ts_part = f" _({entry['ts']})_" if entry.get("ts") else ""
         tag_part = f" [{entry['tags']}]" if entry.get("tags") else ""
-        lines.append(f"- **{key}**: {entry['value']}{tag_part}")
+        lines.append(f"- **{key}**{ts_part}: {entry['value']}{tag_part}")
     with open(MEMORY_FILE_PATH, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

@@ -39,8 +39,8 @@ _HEARTBEAT_PATH = os.path.join(os.path.dirname(config.SOUL_PATH), "HEARTBEAT.md"
 _HEARTBEAT_SYSTEM = """\
 You are Hoonbot running an autonomous background tick. It is now {datetime}.
 
-Below is your full context: persistent memory, recent conversation, current scheduled jobs,
-and system status. Read the checklist below for what to check each tick.
+Below is your full context: persistent memory, recent daily logs, conversation history,
+scheduled jobs, and system status. Read the checklist below for what to check each tick.
 
 Respond ONLY with a single JSON object — no prose before or after:
   {{"action": "none"}}
@@ -49,7 +49,9 @@ Respond ONLY with a single JSON object — no prose before or after:
   {{"action": "schedule", "name": "<short_name>", "cron": "<HH:MM or 5-field cron>", "prompt": "<what to do>"}}
   {{"action": "schedule", "name": "<short_name>", "at": "<YYYY-MM-DD HH:MM>", "prompt": "<what to do>"}}
 
-Be conservative. Most ticks should return {{"action": "none"}}.
+Be proactive. If there is something useful, interesting, or timely to share with the user,
+do it — send a message or create a task. Only return {{"action": "none"}} if there is
+genuinely nothing worth doing right now.
 Never return the internal probe token as a user-visible message.
 """
 
@@ -151,6 +153,7 @@ async def tick() -> None:
 
     try:
         memory_ctx = await mem_store.format_for_prompt(None)
+        daily_logs_ctx = daily_log.load_recent_logs(days=3)
         history = await hist_store.get_history(room_id)
         schedule_ctx = await _format_schedules()
         sysinfo_ctx = sysinfo.get_system_info()
@@ -162,6 +165,8 @@ async def tick() -> None:
             context_parts.append(checklist)
         if memory_ctx:
             context_parts.append(memory_ctx)
+        if daily_logs_ctx:
+            context_parts.append(daily_logs_ctx)
         if schedule_ctx:
             context_parts.append(schedule_ctx)
         if sysinfo_ctx:

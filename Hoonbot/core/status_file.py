@@ -28,8 +28,9 @@ async def refresh() -> None:
     entries = mem_file.list_all()
     if entries:
         for entry in entries:
+            ts_part = f" _({entry['ts']})_" if entry.get("ts") else ""
             tag_part = f" `[{entry['tags']}]`" if entry.get("tags") else ""
-            sections.append(f"- **{entry['key']}**: {entry['value']}{tag_part}")
+            sections.append(f"- **{entry['key']}**{ts_part}: {entry['value']}{tag_part}")
     else:
         sections.append("_No memories stored._")
 
