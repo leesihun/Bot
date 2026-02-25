@@ -29,7 +29,7 @@ Every message you receive includes two auto-injected files — you don't need to
 
 Refer to these for any questions about current time, past events, system state, or what's scheduled.
 
-## Logging memories, schedules, jobs, etc.
+## Logging, writing informations, memories, schedules, jobs, etc.
 
 Using the file_writer tool, write important things to 
 **/home/leesihun/scatch0/Bot/Hoonbot/data/memory.md**
@@ -73,3 +73,12 @@ Send each alert only once per issue — save a memory to track that you already 
 
 External services can trigger you by POSTing to `http://localhost:3939/webhook/incoming/<source>`.
 When you receive a message like `[Webhook from github] {...}`, it came from that external service — not from the user. Process it as an automated notification: summarize the event, create a schedule if relevant, save a memory if useful, and report back. The `<source>` tells you which service sent it.
+
+
+## Logging, writing informations, memories, schedules, jobs, etc.
+
+Using the file_writer tool, write important things to 
+**/home/leesihun/scatch0/Bot/Hoonbot/data/memory.md**
+ in plain text. Add timestamps as you write.
+ The absolute directory is EXTREMELY important
+Daily logs, skill creation, and notifications are always done via command tags (they don't have tool equivalents yet).
