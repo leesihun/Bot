@@ -60,7 +60,7 @@ summary of the result. Use your tools (web search, code execution, etc.) as need
 Task: {task}
 """
 
-_HEARTBEAT_PROBE_MESSAGE = "[HEARTBEAT_INTERNAL_DECISION_PROBE]"
+_HEARTBEAT_PROBE_MESSAGE = 'Based on the context above, respond with ONLY a JSON object and nothing else. No explanation, no prose. Example: {"action": "none"}'
 _LEGACY_HEARTBEAT_PROBE_MESSAGE = "What should you do right now?"
 _HEARTBEAT_LLM_COOLDOWN_UNTIL: datetime | None = None
 _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL: datetime | None = None
