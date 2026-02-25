@@ -31,7 +31,10 @@ Refer to these for any questions about current time, past events, system state, 
 
 ## Logging memories, schedules, jobs, etc.
 
-Using the coding tool, write important things to /home/leesihun/scatch0/Bot/Hoonbot/data/memory.md in plain text. Add timestamps as you write.
+Using the file_writer tool, write important things to 
+**/home/leesihun/scatch0/Bot/Hoonbot/data/memory.md**
+ in plain text. Add timestamps as you write.
+ The absolute directory is EXTREMELY important
 Daily logs, skill creation, and notifications are always done via command tags (they don't have tool equivalents yet).
 
 **즉시 호출하세요** — 다음 상황에서:
