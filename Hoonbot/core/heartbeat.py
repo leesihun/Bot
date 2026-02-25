@@ -27,6 +27,9 @@ from core import (
     scheduled as sched_store,
     status_file,
     sysinfo,
+    daily_log,
+    notify,
+    skills as skills_mod,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,8 +108,12 @@ async def _run_scheduled_jobs(db: aiosqlite.Connection, local_now: datetime = No
                 timeout_seconds=45,
                 max_attempts=1,
             )
-            await messenger.send_message(room_id, result)
-            await hist_store.add_message(db, room_id, "assistant", result)
+            await _process_llm_commands(db, result)
+            reply = _strip_llm_commands(result)
+            if not reply:
+                reply = "..."
+            await messenger.send_message(room_id, reply)
+            await hist_store.add_message(db, room_id, "assistant", reply)
             is_once = bool(job["once_at"])
             await sched_store.mark_run(db, job["id"], disable_if_once=is_once)
         except Exception as exc:
@@ -242,7 +249,9 @@ async def _run_background_task(db: aiosqlite.Connection, room_id: int, task_desc
             timeout_seconds=90,
             max_attempts=2,
         )
-        reply = f"✅ 작업 완료: {task_desc}\n\n{result}"
+        await _process_llm_commands(db, result)
+        clean = _strip_llm_commands(result)
+        reply = f"✅ 작업 완료: {task_desc}\n\n{clean}"
     except Exception as exc:
         _activate_heartbeat_llm_cooldown(exc, where="background_task")
         reply = f"❌ 작업 실패: {task_desc}\n\nError: {exc}"
@@ -250,6 +259,60 @@ async def _run_background_task(db: aiosqlite.Connection, room_id: int, task_desc
 
     await messenger.send_message(room_id, reply)
     await hist_store.add_message(db, room_id, "assistant", reply)
+
+
+async def _process_llm_commands(db: aiosqlite.Connection, raw: str) -> None:
+    """Parse and execute all embedded commands from an LLM response."""
+    changed = False
+
+    mem_commands = mem_store.parse_memory_commands(raw)
+    for cmd in mem_commands:
+        await mem_store.save(db, cmd["key"], cmd["value"], cmd["tags"])
+        logger.info(f"[Memory] Saved: {cmd['key']} = {cmd['value']}")
+        changed = True
+
+    del_commands = mem_store.parse_memory_delete_commands(raw)
+    for key in del_commands:
+        await mem_store.delete(db, key)
+        logger.info(f"[Memory] Deleted: {key}")
+        changed = True
+
+    sched_commands = sched_store.parse_schedule_commands(raw)
+    for cmd in sched_commands:
+        job_id = await sched_store.add_job(
+            db, cmd["name"], config.MESSENGER_HOME_ROOM_ID, cmd["prompt"],
+            cron=cmd["cron"], once_at=cmd["once_at"],
+        )
+        logger.info(f"[Schedule] Created job #{job_id}: {cmd['name']}")
+        changed = True
+
+    skill_commands = skills_mod.parse_skill_create_commands(raw)
+    for cmd in skill_commands:
+        path = skills_mod.create_skill(cmd["name"], cmd["description"], cmd["instructions"])
+        logger.info(f"[Skills] Created skill '{cmd['name']}' at {path}")
+        changed = True
+
+    log_entries = daily_log.parse_daily_log_commands(raw)
+    for entry in log_entries:
+        daily_log.append_entry(entry)
+
+    notify_commands = notify.parse_notify_commands(raw)
+    for cmd in notify_commands:
+        notify.send(cmd["title"], cmd["message"])
+
+    if changed:
+        await status_file.refresh(db)
+
+
+def _strip_llm_commands(raw: str) -> str:
+    """Remove all embedded command tags from LLM output before sending to user."""
+    text = mem_store.strip_memory_commands(raw)
+    text = mem_store.strip_memory_delete_commands(text)
+    text = sched_store.strip_schedule_commands(text)
+    text = skills_mod.strip_skill_create_commands(text)
+    text = daily_log.strip_daily_log_commands(text)
+    text = notify.strip_notify_commands(text)
+    return text.strip()
 
 
 async def _format_schedules(db: aiosqlite.Connection) -> str:
