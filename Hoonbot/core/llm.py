@@ -1,7 +1,7 @@
 """Async client for the LLM_API /v1/chat/completions endpoint."""
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import Awaitable, Callable, Dict, List, Optional
 
 import httpx
 import config
@@ -17,22 +17,81 @@ async def chat(
     timeout_seconds: float = 120,
     max_attempts: int = 3,
     base_delay: float = 2.0,
+    tools: Optional[List[Dict]] = None,
+    tool_executor: Optional[Callable[[str, dict], Awaitable[str]]] = None,
 ) -> str:
     """
     Call LLM_API chat completions and return the assistant's reply text.
+
+    If `tools` and `tool_executor` are provided, handles tool call responses
+    transparently: executes each tool, appends results, then gets the final
+    text response from the LLM. Callers always receive a plain string.
 
     The endpoint uses multipart/form-data with `messages` as a JSON string.
     See: LLM_API/backend/api/routes/chat.py
     """
     agent = agent_type or config.LLM_API_AGENT_TYPE
 
-    form_data = {
+    body = await _api_call(
+        messages, agent, session_id, timeout_seconds, max_attempts, base_delay, tools
+    )
+    choice = body["choices"][0]
+    msg = choice["message"]
+    finish_reason = choice.get("finish_reason", "stop")
+
+    # --- Tool call loop (single round) ---
+    if finish_reason == "tool_calls" and tool_executor and msg.get("tool_calls"):
+        tool_calls = msg["tool_calls"]
+        logger.info(f"[LLM] Tool calls requested: {[tc['function']['name'] for tc in tool_calls]}")
+
+        # Build extended messages: original + assistant tool-call message + results
+        extended = list(messages) + [msg]
+        for tc in tool_calls:
+            tool_name = tc["function"]["name"]
+            try:
+                args = json.loads(tc["function"]["arguments"])
+            except (json.JSONDecodeError, KeyError):
+                logger.warning(f"[LLM] Could not parse tool args for {tool_name!r}")
+                args = {}
+
+            result = await tool_executor(tool_name, args)
+            logger.debug(f"[LLM] Tool result for {tool_name!r}: {result!r}")
+            extended.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": result,
+            })
+
+        # Get final text response — no tools on follow-up to prevent infinite loops
+        body = await _api_call(
+            extended, agent, session_id, timeout_seconds, max_attempts, base_delay,
+            tools=None,
+        )
+        msg = body["choices"][0]["message"]
+
+    content = msg.get("content") or ""
+    return content
+
+
+async def _api_call(
+    messages: List[Dict],
+    agent: str,
+    session_id: Optional[str],
+    timeout_seconds: float,
+    max_attempts: int,
+    base_delay: float,
+    tools: Optional[List[Dict]],
+) -> dict:
+    """Single HTTP call to the completions endpoint with retry."""
+    form_data: dict = {
         "messages": json.dumps(messages),
         "agent_type": agent,
         "stream": "false",
     }
     if session_id:
         form_data["session_id"] = session_id
+    if tools:
+        form_data["tools"] = json.dumps(tools)
 
     endpoint = f"{config.LLM_API_URL}/v1/chat/completions"
 
@@ -56,14 +115,13 @@ async def chat(
         base_delay=base_delay,
     )
 
-    # OpenAI-compatible response shape
     try:
-        content = body["choices"][0]["message"]["content"]
+        _ = body["choices"][0]["message"]
     except (KeyError, IndexError) as exc:
         logger.error(f"[LLM] Unexpected response shape: {body}")
         raise ValueError(f"Unexpected LLM response: {body}") from exc
 
-    return content
+    return body
 
 
 def load_soul() -> str:

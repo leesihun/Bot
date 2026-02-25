@@ -34,6 +34,7 @@ from core import status_file
 from core import skills as skills_mod
 from core import daily_log
 from core import notify
+from core import tools as tools_mod
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -137,11 +138,20 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
         history = await hist_store.get_history(db, room_id)
         memory_ctx = await mem_store.format_for_prompt(db)
 
-        # 3. Build message list and call LLM
+        # 3. Build message list and call LLM with tool calling enabled
         messages = llm.build_messages(soul, history, content, memory_ctx)
-        raw_reply = await llm.chat(messages)
 
-        # 4. Parse and execute memory commands embedded in the reply
+        async def _tool_executor(tool_name: str, args: dict) -> str:
+            return await tools_mod.execute(db, tool_name, args, room_id=room_id)
+
+        raw_reply = await llm.chat(
+            messages,
+            tools=tools_mod.HOONBOT_TOOLS,
+            tool_executor=_tool_executor,
+        )
+
+        # 4. Fallback: parse command tags in case LLM doesn't support tool calling.
+        # Also handles skills/daily_log/notify which are not yet tools.
         mem_commands = mem_store.parse_memory_commands(raw_reply)
         for cmd in mem_commands:
             await mem_store.save(db, cmd["key"], cmd["value"], cmd["tags"])
