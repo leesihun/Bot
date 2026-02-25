@@ -2,23 +2,22 @@
 LLM tool definitions (OpenAI function-calling format) and executor.
 
 Tools give the LLM a reliable, structured way to persist memory and create
-schedules without relying on fragile regex-parsed command tags.
+schedules. Memory is stored in data/memory.md, schedules in data/schedules.json.
+No SQLite involved.
 
 Usage in callers:
     from core import tools as tools_mod
 
     async def my_executor(tool_name: str, args: dict) -> str:
-        return await tools_mod.execute(db, tool_name, args, room_id=room_id)
+        return await tools_mod.execute(tool_name, args, room_id=room_id)
 
     reply = await llm.chat(messages, tools=tools_mod.HOONBOT_TOOLS, tool_executor=my_executor)
 """
 import logging
-from typing import Any, Dict, List
-
-import aiosqlite
+from typing import Any, Dict, List, Optional
 
 import config
-from core import memory as mem_store
+from core import memory_file as mem_file
 from core import scheduled as sched_store
 from core import status_file
 
@@ -34,10 +33,10 @@ HOONBOT_TOOLS: List[Dict] = [
         "function": {
             "name": "save_memory",
             "description": (
-                "중요한 정보를 영구 메모리에 저장합니다. "
+                "중요한 정보를 영구 메모리(data/memory.md)에 저장합니다. "
                 "사용자의 이름, 선호도, 진행 중인 프로젝트, 반복적으로 참조하는 사실 등을 기억할 때 사용하세요. "
                 "같은 key가 이미 존재하면 덮어씁니다. "
-                "언제든지 저장할 게 있으면 즉시 호출하세요 — 대화가 끝나면 내용이 사라집니다."
+                "언제든지 저장할 게 있으면 즉시 호출하세요 — 대화가 끝나면 컨텍스트가 사라집니다."
             ),
             "parameters": {
                 "type": "object",
@@ -137,23 +136,18 @@ HOONBOT_TOOLS: List[Dict] = [
 
 
 async def execute(
-    db: aiosqlite.Connection,
     tool_name: str,
     args: Dict[str, Any],
-    room_id: int = None,
+    room_id: Optional[int] = None,
 ) -> str:
-    """
-    Execute a named tool call and return a result string.
-    The result is sent back to the LLM as a tool message so it can
-    confirm success and continue the conversation naturally.
-    """
+    """Execute a named tool call. Returns a result string sent back to the LLM."""
     try:
         if tool_name == "save_memory":
-            return await _save_memory(db, args)
+            return _save_memory(args)
         elif tool_name == "delete_memory":
-            return await _delete_memory(db, args)
+            return _delete_memory(args)
         elif tool_name == "create_schedule":
-            return await _create_schedule(db, args, room_id)
+            return await _create_schedule(args, room_id)
         else:
             logger.warning(f"[Tool] Unknown tool called: {tool_name!r}")
             return f"알 수 없는 도구: {tool_name}"
@@ -162,30 +156,23 @@ async def execute(
         return f"오류 발생: {exc}"
 
 
-async def _save_memory(db: aiosqlite.Connection, args: Dict[str, Any]) -> str:
+def _save_memory(args: Dict[str, Any]) -> str:
     key = args["key"].strip()
     value = args["value"].strip()
-    tags_raw = args.get("tags", "")
-    tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
-
-    await mem_store.save(db, key, value, tags)
-    await status_file.refresh(db)
-    logger.info(f"[Tool] save_memory: {key!r} = {value!r}")
+    tags = args.get("tags", "")
+    mem_file.save(key, value, tags)
     return f"저장 완료: {key} = {value}"
 
 
-async def _delete_memory(db: aiosqlite.Connection, args: Dict[str, Any]) -> str:
+def _delete_memory(args: Dict[str, Any]) -> str:
     key = args["key"].strip()
-    deleted = await mem_store.delete(db, key)
-    await status_file.refresh(db)
-    logger.info(f"[Tool] delete_memory: {key!r} (found={deleted})")
+    deleted = mem_file.delete(key)
     return f"삭제 완료: {key}" if deleted else f"키를 찾을 수 없음: {key}"
 
 
 async def _create_schedule(
-    db: aiosqlite.Connection,
     args: Dict[str, Any],
-    room_id: int = None,
+    room_id: Optional[int] = None,
 ) -> str:
     name = args["name"].strip()
     prompt_text = args["prompt"].strip()
@@ -196,8 +183,8 @@ async def _create_schedule(
         return "오류: cron 또는 once_at 중 하나를 반드시 지정해야 합니다."
 
     rid = room_id if room_id is not None else config.MESSENGER_HOME_ROOM_ID
-    job_id = await sched_store.add_job(db, name, rid, prompt_text, cron=cron, once_at=once_at)
-    await status_file.refresh(db)
+    job_id = await sched_store.add_job(name, rid, prompt_text, cron=cron, once_at=once_at)
+    await status_file.refresh()
     logger.info(f"[Tool] create_schedule: {name!r} #{job_id}")
 
     schedule_desc = f"매일 {cron}" if cron else f"{once_at}에 1회"

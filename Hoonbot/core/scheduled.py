@@ -1,38 +1,50 @@
-"""Scheduled messages / reminders backed by SQLite.
+"""Scheduled messages / reminders backed by a JSON file (data/schedules.json).
 
 Users can ask Hoonbot to remind them or send periodic messages.
-The LLM emits [SCHEDULE: ...] commands that are parsed and stored here.
-On each heartbeat tick, due jobs are checked and executed.
+The LLM emits [SCHEDULE: ...] commands (or calls create_schedule tool) that
+are stored here. On each heartbeat tick, due jobs are checked and executed.
 """
+import json
+import os
 import re
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
-import aiosqlite
+import config
 
 logger = logging.getLogger(__name__)
 
+_SCHEDULES_FILE = os.path.join(os.path.dirname(config.DB_PATH), "schedules.json")
 
-async def init_scheduled(db: aiosqlite.Connection) -> None:
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS scheduled_jobs (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            name        TEXT    NOT NULL,
-            cron        TEXT    NOT NULL DEFAULT '',
-            once_at     TEXT    NOT NULL DEFAULT '',
-            room_id     INTEGER NOT NULL,
-            prompt      TEXT    NOT NULL,
-            enabled     INTEGER NOT NULL DEFAULT 1,
-            last_run    TEXT    NOT NULL DEFAULT '',
-            created_at  TEXT    NOT NULL
-        )
-    """)
-    await db.commit()
 
+# ---------------------------------------------------------------------------
+# Internal file helpers
+# ---------------------------------------------------------------------------
+
+def _read_jobs() -> List[Dict]:
+    try:
+        with open(_SCHEDULES_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _write_jobs(jobs: List[Dict]) -> None:
+    os.makedirs(os.path.dirname(_SCHEDULES_FILE), exist_ok=True)
+    with open(_SCHEDULES_FILE, "w", encoding="utf-8") as f:
+        json.dump(jobs, f, ensure_ascii=False, indent=2)
+
+
+def _next_id(jobs: List[Dict]) -> int:
+    return max((j["id"] for j in jobs), default=0) + 1
+
+
+# ---------------------------------------------------------------------------
+# Public API (async for compatibility with existing callers)
+# ---------------------------------------------------------------------------
 
 async def add_job(
-    db: aiosqlite.Connection,
     name: str,
     room_id: int,
     prompt: str,
@@ -40,84 +52,78 @@ async def add_job(
     once_at: str = "",
 ) -> int:
     """Create a scheduled job. Returns the job ID."""
+    jobs = _read_jobs()
+    job_id = _next_id(jobs)
     now = datetime.now(timezone.utc).isoformat()
-    cursor = await db.execute(
-        """INSERT INTO scheduled_jobs (name, cron, once_at, room_id, prompt, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (name, cron, once_at, room_id, prompt, now),
-    )
-    await db.commit()
-    return cursor.lastrowid
+    jobs.append({
+        "id": job_id,
+        "name": name,
+        "cron": cron or "",
+        "once_at": once_at or "",
+        "room_id": room_id,
+        "prompt": prompt,
+        "enabled": True,
+        "last_run": "",
+        "created_at": now,
+    })
+    _write_jobs(jobs)
+    logger.info(f"[Schedule] Created job #{job_id}: {name!r}")
+    return job_id
 
 
-async def remove_job(db: aiosqlite.Connection, job_id: int) -> bool:
-    cursor = await db.execute("DELETE FROM scheduled_jobs WHERE id = ?", (job_id,))
-    await db.commit()
-    return cursor.rowcount > 0
+async def remove_job(job_id: int) -> bool:
+    jobs = _read_jobs()
+    new_jobs = [j for j in jobs if j["id"] != job_id]
+    if len(new_jobs) == len(jobs):
+        return False
+    _write_jobs(new_jobs)
+    return True
 
 
-async def list_jobs(db: aiosqlite.Connection, room_id: Optional[int] = None) -> List[Dict]:
+async def list_jobs(room_id: Optional[int] = None) -> List[Dict]:
+    jobs = _read_jobs()
+    enabled = [j for j in jobs if j.get("enabled", True)]
     if room_id is not None:
-        async with db.execute(
-            "SELECT id, name, cron, once_at, room_id, prompt, enabled, last_run FROM scheduled_jobs WHERE room_id = ? AND enabled = 1 ORDER BY id",
-            (room_id,),
-        ) as cur:
-            rows = await cur.fetchall()
-    else:
-        async with db.execute(
-            "SELECT id, name, cron, once_at, room_id, prompt, enabled, last_run FROM scheduled_jobs WHERE enabled = 1 ORDER BY id"
-        ) as cur:
-            rows = await cur.fetchall()
-    return [
-        {"id": r[0], "name": r[1], "cron": r[2], "once_at": r[3], "room_id": r[4],
-         "prompt": r[5], "enabled": r[6], "last_run": r[7]}
-        for r in rows
-    ]
+        enabled = [j for j in enabled if j["room_id"] == room_id]
+    return sorted(enabled, key=lambda j: j["id"])
 
 
-async def get_due_jobs(db: aiosqlite.Connection, now: datetime) -> List[Dict]:
-    """Return jobs that are due to run based on current time.
-
-    For cron jobs: checks if the current hour:minute matches and last_run is not today.
-    For one-time jobs: checks if once_at <= now and hasn't been run yet.
-    """
-    jobs = await list_jobs(db)
+async def get_due_jobs(now: datetime) -> List[Dict]:
+    """Return jobs that are due to run based on current time."""
+    jobs = await list_jobs()
     due = []
     now_str = now.strftime("%Y-%m-%d %H:%M")
-    now_hm = now.strftime("%H:%M")
     now_date = now.strftime("%Y-%m-%d")
 
     for job in jobs:
         if job["cron"]:
-            # Simple cron: "HH:MM" daily, or full 5-field (we support HH:MM shorthand)
-            cron = job["cron"].strip()
-            if _cron_matches(cron, now):
-                # Don't run if already ran today
+            if _cron_matches(job["cron"].strip(), now):
                 if job["last_run"] and job["last_run"][:10] == now_date:
                     continue
                 due.append(job)
-
         elif job["once_at"]:
-            # One-time: ISO datetime string
             if job["once_at"] <= now_str and not job["last_run"]:
                 due.append(job)
 
     return due
 
 
-async def mark_run(db: aiosqlite.Connection, job_id: int, disable_if_once: bool = False) -> None:
+async def mark_run(job_id: int, disable_if_once: bool = False) -> None:
     """Mark a job as having been run. For one-time jobs, disable them."""
+    jobs = _read_jobs()
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if disable_if_once:
-        await db.execute(
-            "UPDATE scheduled_jobs SET last_run = ?, enabled = 0 WHERE id = ?", (now, job_id)
-        )
-    else:
-        await db.execute(
-            "UPDATE scheduled_jobs SET last_run = ? WHERE id = ?", (now, job_id)
-        )
-    await db.commit()
+    for j in jobs:
+        if j["id"] == job_id:
+            j["last_run"] = now
+            if disable_if_once:
+                j["enabled"] = False
+            break
+    _write_jobs(jobs)
 
+
+# ---------------------------------------------------------------------------
+# Cron matching (unchanged from original)
+# ---------------------------------------------------------------------------
 
 def _cron_matches(cron: str, now: datetime) -> bool:
     """Check if a cron expression matches or is overdue at the current time.
@@ -132,14 +138,12 @@ def _cron_matches(cron: str, now: datetime) -> bool:
     """
     cron = cron.strip()
 
-    # HH:MM shorthand — fire if current time is at or past the scheduled time today
     if re.match(r"^\d{1,2}:\d{2}$", cron):
         parts = cron.split(":")
         sched_mins = int(parts[0]) * 60 + int(parts[1])
         now_mins = now.hour * 60 + now.minute
         return now_mins >= sched_mins
 
-    # 5-field cron — check day/month/dow exactly; use "at or past" for hour:minute
     fields = cron.split()
     if len(fields) == 5:
         minute, hour, day, month, dow = fields
@@ -149,7 +153,6 @@ def _cron_matches(cron: str, now: datetime) -> bool:
             return False
         if dow != "*" and now.isoweekday() % 7 != int(dow):
             return False
-        # "At or past" for hour:minute within the current day/period
         if hour != "*":
             sched_mins = int(hour) * 60 + (int(minute) if minute != "*" else 0)
             now_mins = now.hour * 60 + now.minute
@@ -162,12 +165,12 @@ def _cron_matches(cron: str, now: datetime) -> bool:
     return False
 
 
-def parse_schedule_commands(text: str) -> List[Dict]:
-    """Extract [SCHEDULE: ...] commands from LLM output.
+# ---------------------------------------------------------------------------
+# Command tag parsing (unchanged — fallback for LLMs without tool calling)
+# ---------------------------------------------------------------------------
 
-    Format: [SCHEDULE: name=<name>, cron=<cron_or_time>, prompt=<what to do>]
-    Or:     [SCHEDULE: name=<name>, at=<ISO datetime>, prompt=<what to do>]
-    """
+def parse_schedule_commands(text: str) -> List[Dict]:
+    """Extract [SCHEDULE: ...] commands from LLM output."""
     pattern = r'\[SCHEDULE:\s*name=([^,\]]+),\s*(?:cron=([^,\]]+),\s*)?(?:at=([^,\]]+),\s*)?prompt=([^\]]+)\]'
     commands = []
     for m in re.finditer(pattern, text, re.IGNORECASE):

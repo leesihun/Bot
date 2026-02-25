@@ -1,77 +1,64 @@
-"""Per-room conversation history backed by SQLite."""
+"""Per-room conversation history backed by JSON files (data/history/room_{id}.json)."""
 import json
+import os
 from datetime import datetime, timezone
-from typing import List, Dict
+from typing import Dict, List
 
-import aiosqlite
 import config
 
-
-async def init_history(db: aiosqlite.Connection) -> None:
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS room_history (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            room_id   INTEGER NOT NULL,
-            role      TEXT    NOT NULL,
-            content   TEXT    NOT NULL,
-            timestamp TEXT    NOT NULL
-        )
-    """)
-    await db.execute("CREATE INDEX IF NOT EXISTS idx_history_room ON room_history(room_id, id)")
-    await db.commit()
+_HISTORY_DIR = os.path.join(os.path.dirname(config.DB_PATH), "history")
 
 
-async def add_message(db: aiosqlite.Connection, room_id: int, role: str, content: str) -> None:
+def _room_file(room_id: int) -> str:
+    return os.path.join(_HISTORY_DIR, f"room_{room_id}.json")
+
+
+def _read(room_id: int) -> List[Dict]:
+    try:
+        with open(_room_file(room_id), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _write(room_id: int, messages: List[Dict]) -> None:
+    os.makedirs(_HISTORY_DIR, exist_ok=True)
+    with open(_room_file(room_id), "w", encoding="utf-8") as f:
+        json.dump(messages, f, ensure_ascii=False, indent=2)
+
+
+async def add_message(room_id: int, role: str, content: str) -> None:
     now = datetime.now(timezone.utc).isoformat()
-    await db.execute(
-        "INSERT INTO room_history (room_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
-        (room_id, role, content, now),
-    )
-    await db.commit()
-    await _trim(db, room_id)
+    messages = _read(room_id)
+    messages.append({"role": role, "content": content, "timestamp": now})
+    if len(messages) > config.MAX_HISTORY_MESSAGES:
+        messages = messages[-config.MAX_HISTORY_MESSAGES:]
+    _write(room_id, messages)
 
 
-async def get_history(db: aiosqlite.Connection, room_id: int) -> List[Dict[str, str]]:
-    limit = config.MAX_HISTORY_MESSAGES
-    async with db.execute(
-        """SELECT role, content FROM room_history
-           WHERE room_id = ?
-           ORDER BY id DESC LIMIT ?""",
-        (room_id, limit),
-    ) as cur:
-        rows = await cur.fetchall()
-    # Return in chronological order (oldest first)
-    return [{"role": row[0], "content": row[1]} for row in reversed(rows)]
+async def get_history(room_id: int) -> List[Dict[str, str]]:
+    messages = _read(room_id)
+    return [{"role": m["role"], "content": m["content"]} for m in messages[-config.MAX_HISTORY_MESSAGES:]]
 
 
-async def clear_history(db: aiosqlite.Connection, room_id: int) -> None:
-    await db.execute("DELETE FROM room_history WHERE room_id = ?", (room_id,))
-    await db.commit()
+async def clear_history(room_id: int) -> None:
+    _write(room_id, [])
 
 
-async def get_count(db: aiosqlite.Connection, room_id: int) -> int:
-    """Return number of history rows for a room."""
-    async with db.execute(
-        "SELECT COUNT(*) FROM room_history WHERE room_id = ?", (room_id,)
-    ) as cur:
-        row = await cur.fetchone()
-    return row[0] if row else 0
+async def get_count(room_id: int) -> int:
+    return len(_read(room_id))
 
 
-async def get_active_rooms(db: aiosqlite.Connection) -> List[int]:
-    """Return list of room IDs that have history entries."""
-    async with db.execute("SELECT DISTINCT room_id FROM room_history") as cur:
-        rows = await cur.fetchall()
-    return [r[0] for r in rows]
-
-
-async def _trim(db: aiosqlite.Connection, room_id: int) -> None:
-    """Keep only the most recent MAX_HISTORY_MESSAGES rows per room."""
-    limit = config.MAX_HISTORY_MESSAGES
-    await db.execute(
-        """DELETE FROM room_history WHERE room_id = ? AND id NOT IN (
-               SELECT id FROM room_history WHERE room_id = ? ORDER BY id DESC LIMIT ?
-           )""",
-        (room_id, room_id, limit),
-    )
-    await db.commit()
+async def get_active_rooms() -> List[int]:
+    try:
+        files = os.listdir(_HISTORY_DIR)
+    except FileNotFoundError:
+        return []
+    rooms = []
+    for f in files:
+        if f.startswith("room_") and f.endswith(".json"):
+            try:
+                rooms.append(int(f[5:-5]))
+            except ValueError:
+                pass
+    return rooms

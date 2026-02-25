@@ -16,13 +16,13 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 
-import aiosqlite
 import httpx
 import config
 from core import (
     llm,
     messenger,
     memory as mem_store,
+    memory_file as mem_file,
     history as hist_store,
     scheduled as sched_store,
     status_file,
@@ -88,10 +88,11 @@ def _is_active_hours() -> bool:
         return current >= start or current <= end
 
 
-async def _run_scheduled_jobs(db: aiosqlite.Connection, local_now: datetime = None) -> None:
+async def _run_scheduled_jobs(local_now: datetime = None) -> None:
     """Check for due scheduled jobs and execute them using local time."""
     now = local_now or datetime.now()
-    due_jobs = await sched_store.get_due_jobs(db, now)
+    due_jobs = await sched_store.get_due_jobs(now)
+    room_id = config.MESSENGER_HOME_ROOM_ID
 
     for job in due_jobs:
         room_id = job["room_id"]
@@ -108,23 +109,23 @@ async def _run_scheduled_jobs(db: aiosqlite.Connection, local_now: datetime = No
                 timeout_seconds=45,
                 max_attempts=1,
             )
-            await _process_llm_commands(db, result)
+            await _process_llm_commands(result)
             reply = _strip_llm_commands(result)
             if not reply:
                 reply = "..."
             await messenger.send_message(room_id, reply)
-            await hist_store.add_message(db, room_id, "assistant", reply)
+            await hist_store.add_message(room_id, "assistant", reply)
             is_once = bool(job["once_at"])
-            await sched_store.mark_run(db, job["id"], disable_if_once=is_once)
+            await sched_store.mark_run(job["id"], disable_if_once=is_once)
         except Exception as exc:
             _activate_heartbeat_llm_cooldown(exc, where="scheduled_job")
             logger.error(f"[Schedule] Job failed: {exc}", exc_info=True)
 
     if due_jobs:
-        await status_file.refresh(db)
+        await status_file.refresh()
 
 
-async def tick(db: aiosqlite.Connection) -> None:
+async def tick() -> None:
     """Single heartbeat tick."""
     if not config.HEARTBEAT_ENABLED:
         return
@@ -141,17 +142,17 @@ async def tick(db: aiosqlite.Connection) -> None:
     logger.info(f"[Heartbeat] Tick at {now}")
 
     if _is_heartbeat_llm_cooldown_active():
-        await _report_heartbeat_cooldown_once(db, room_id)
+        await _report_heartbeat_cooldown_once(room_id)
         return
 
     local_now = datetime.now()
-    await _run_scheduled_jobs(db, local_now)
-    await _maybe_compaction_flushes(db)
+    await _run_scheduled_jobs(local_now)
+    await _maybe_compaction_flushes()
 
     try:
-        memory_ctx = await mem_store.format_for_prompt(db)
-        history = await hist_store.get_history(db, room_id)
-        schedule_ctx = await _format_schedules(db)
+        memory_ctx = await mem_store.format_for_prompt(None)
+        history = await hist_store.get_history(room_id)
+        schedule_ctx = await _format_schedules()
         sysinfo_ctx = sysinfo.get_system_info()
         checklist = _load_heartbeat_checklist()
 
@@ -192,22 +193,22 @@ async def tick(db: aiosqlite.Connection) -> None:
             content = action.get("content", "").strip()
             if content and not _is_internal_probe_echo(content):
                 await messenger.send_message(room_id, content)
-                await hist_store.add_message(db, room_id, "assistant", content)
+                await hist_store.add_message(room_id, "assistant", content)
             elif content:
                 logger.warning("[Heartbeat] Ignoring leaked internal probe echo from model output.")
         elif action["action"] == "task":
             task_desc = action.get("content", "").strip()
             if task_desc:
-                asyncio.create_task(_run_background_task(db, room_id, task_desc))
+                asyncio.create_task(_run_background_task(room_id, task_desc))
         elif action["action"] == "schedule":
-            await _create_schedule(db, room_id, action)
+            await _create_schedule(room_id, action)
 
     except Exception as exc:
         _activate_heartbeat_llm_cooldown(exc, where="heartbeat_tick")
         logger.error(f"[Heartbeat] Tick failed: {exc}", exc_info=True)
 
 
-async def _create_schedule(db: aiosqlite.Connection, room_id: int, action: dict) -> None:
+async def _create_schedule(room_id: int, action: dict) -> None:
     """Create a scheduled job from an autonomous heartbeat decision."""
     name = action.get("name", "").strip()
     prompt = action.get("prompt", "").strip()
@@ -218,7 +219,7 @@ async def _create_schedule(db: aiosqlite.Connection, room_id: int, action: dict)
         logger.warning(f"[Heartbeat] Invalid schedule action: {action}")
         return
 
-    job_id = await sched_store.add_job(db, name, room_id, prompt, cron=cron, once_at=once_at)
+    job_id = await sched_store.add_job(name, room_id, prompt, cron=cron, once_at=once_at)
     logger.info(f"[Heartbeat] Autonomously created job #{job_id}: {name}")
 
     schedule_desc = f"cron={cron}" if cron else f"at={once_at}"
@@ -227,13 +228,13 @@ async def _create_schedule(db: aiosqlite.Connection, room_id: int, action: dict)
         f"📋 새 예약 작업을 설정했어요: **{name}** ({schedule_desc})\n→ {prompt}",
     )
     await hist_store.add_message(
-        db, room_id, "assistant", f"[Auto-scheduled] {name} ({schedule_desc}): {prompt}"
+        room_id, "assistant", f"[Auto-scheduled] {name} ({schedule_desc}): {prompt}"
     )
-    await status_file.refresh(db)
+    await status_file.refresh()
 
 
-async def _run_background_task(db: aiosqlite.Connection, room_id: int, task_desc: str) -> None:
-    """Execute a background task and report the result. Runs non-blocking via asyncio.create_task."""
+async def _run_background_task(room_id: int, task_desc: str) -> None:
+    """Execute a background task and report the result."""
     logger.info(f"[Heartbeat] Running background task: {task_desc}")
     await messenger.send_message(room_id, f"🔄 백그라운드 작업 시작: {task_desc}")
 
@@ -249,7 +250,7 @@ async def _run_background_task(db: aiosqlite.Connection, room_id: int, task_desc
             timeout_seconds=90,
             max_attempts=2,
         )
-        await _process_llm_commands(db, result)
+        await _process_llm_commands(result)
         clean = _strip_llm_commands(result)
         reply = f"✅ 작업 완료: {task_desc}\n\n{clean}"
     except Exception as exc:
@@ -258,29 +259,29 @@ async def _run_background_task(db: aiosqlite.Connection, room_id: int, task_desc
         logger.error(f"[Heartbeat] Task failed: {exc}", exc_info=True)
 
     await messenger.send_message(room_id, reply)
-    await hist_store.add_message(db, room_id, "assistant", reply)
+    await hist_store.add_message(room_id, "assistant", reply)
 
 
-async def _process_llm_commands(db: aiosqlite.Connection, raw: str) -> None:
-    """Parse and execute all embedded commands from an LLM response."""
+async def _process_llm_commands(raw: str) -> None:
+    """Parse and execute all embedded command tags from an LLM response."""
     changed = False
 
     mem_commands = mem_store.parse_memory_commands(raw)
     for cmd in mem_commands:
-        await mem_store.save(db, cmd["key"], cmd["value"], cmd["tags"])
+        mem_file.save(cmd["key"], cmd["value"], cmd["tags"])
         logger.info(f"[Memory] Saved: {cmd['key']} = {cmd['value']}")
         changed = True
 
     del_commands = mem_store.parse_memory_delete_commands(raw)
     for key in del_commands:
-        await mem_store.delete(db, key)
+        mem_file.delete(key)
         logger.info(f"[Memory] Deleted: {key}")
         changed = True
 
     sched_commands = sched_store.parse_schedule_commands(raw)
     for cmd in sched_commands:
         job_id = await sched_store.add_job(
-            db, cmd["name"], config.MESSENGER_HOME_ROOM_ID, cmd["prompt"],
+            cmd["name"], config.MESSENGER_HOME_ROOM_ID, cmd["prompt"],
             cron=cmd["cron"], once_at=cmd["once_at"],
         )
         logger.info(f"[Schedule] Created job #{job_id}: {cmd['name']}")
@@ -301,7 +302,7 @@ async def _process_llm_commands(db: aiosqlite.Connection, raw: str) -> None:
         notify.send(cmd["title"], cmd["message"])
 
     if changed:
-        await status_file.refresh(db)
+        await status_file.refresh()
 
 
 def _strip_llm_commands(raw: str) -> str:
@@ -315,9 +316,9 @@ def _strip_llm_commands(raw: str) -> str:
     return text.strip()
 
 
-async def _format_schedules(db: aiosqlite.Connection) -> str:
+async def _format_schedules() -> str:
     """Format current scheduled jobs for heartbeat context."""
-    jobs = await sched_store.list_jobs(db)
+    jobs = await sched_store.list_jobs()
     if not jobs:
         return ""
     lines = ["## Current Scheduled Jobs\n"]
@@ -328,33 +329,29 @@ async def _format_schedules(db: aiosqlite.Connection) -> str:
     return "\n".join(lines)
 
 
-async def _maybe_compaction_flushes(db: aiosqlite.Connection) -> None:
-    """For rooms near history capacity, prompt LLM to save key memories before old messages are trimmed.
-
-    Runs at most once per 4 hours per room (tracked via a _system memory entry).
-    This prevents important context from being silently dropped when history overflows.
-    """
+async def _maybe_compaction_flushes() -> None:
+    """For rooms near history capacity, prompt LLM to save key memories before old messages are trimmed."""
     threshold = int(config.MAX_HISTORY_MESSAGES * config.COMPACTION_FLUSH_THRESHOLD)
-    active_rooms = await hist_store.get_active_rooms(db)
+    active_rooms = await hist_store.get_active_rooms()
 
     for room_id in active_rooms:
-        count = await hist_store.get_count(db, room_id)
+        count = await hist_store.get_count(room_id)
         if count < threshold:
             continue
 
-        # Check if we flushed this room recently
+        # Check if we flushed this room recently (4-hour cooldown)
         flush_key = f"_compaction_flush_{room_id}"
-        last_ts = await mem_store.recall(db, flush_key)
+        last_ts = mem_file.recall_state(flush_key)
         if last_ts:
             try:
                 last_dt = datetime.fromisoformat(last_ts)
                 if datetime.now(timezone.utc) - last_dt < timedelta(hours=4):
-                    continue  # Flushed within the last 4 hours
+                    continue
             except Exception:
                 pass
 
         logger.info(f"[Heartbeat] Compaction flush for room {room_id} (history={count}/{config.MAX_HISTORY_MESSAGES})")
-        history = await hist_store.get_history(db, room_id)
+        history = await hist_store.get_history(room_id)
         soul = llm.load_soul()
 
         try:
@@ -385,15 +382,15 @@ async def _maybe_compaction_flushes(db: aiosqlite.Connection) -> None:
             )
             mem_commands = mem_store.parse_memory_commands(raw)
             for cmd in mem_commands:
-                await mem_store.save(db, cmd["key"], cmd["value"], cmd["tags"])
+                mem_file.save(cmd["key"], cmd["value"], cmd["tags"])
 
-            # Record flush timestamp as internal system memory
+            # Record flush timestamp in state.json
             now_iso = datetime.now(timezone.utc).isoformat()
-            await mem_store.save(db, flush_key, now_iso, ["_system"])
+            mem_file.save_state(flush_key, now_iso)
 
             if mem_commands:
                 logger.info(f"[Heartbeat] Compaction flush saved {len(mem_commands)} memories for room {room_id}")
-                await status_file.refresh(db)
+                await status_file.refresh()
             else:
                 logger.debug(f"[Heartbeat] Compaction flush for room {room_id}: nothing new to save")
 
@@ -403,11 +400,7 @@ async def _maybe_compaction_flushes(db: aiosqlite.Connection) -> None:
 
 
 def _parse_action(raw: str) -> tuple[dict, bool]:
-    """Extract the JSON action from the LLM response.
-
-    Returns:
-      (action, parsed_ok)
-    """
+    """Extract the JSON action from the LLM response."""
     raw = raw.strip()
     start = raw.find("{")
     end = raw.rfind("}") + 1
@@ -442,7 +435,6 @@ def _filter_internal_probe_history(history: list[dict]) -> list[dict]:
             continue
         cleaned.append(msg)
     return cleaned
-
 
 
 def _is_llm_connectivity_error(exc: Exception) -> bool:
@@ -481,7 +473,7 @@ def _activate_heartbeat_llm_cooldown(exc: Exception, where: str) -> None:
     )
 
 
-async def _report_heartbeat_cooldown_once(db: aiosqlite.Connection, room_id: int) -> None:
+async def _report_heartbeat_cooldown_once(room_id: int) -> None:
     global _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL
     until = _HEARTBEAT_LLM_COOLDOWN_UNTIL
     if until is None:
@@ -498,5 +490,5 @@ async def _report_heartbeat_cooldown_once(db: aiosqlite.Connection, room_id: int
         f"약 {minutes}분 동안 일시 중지했어요."
     )
     await messenger.send_message(room_id, report)
-    await hist_store.add_message(db, room_id, "assistant", report)
+    await hist_store.add_message(room_id, "assistant", report)
     _HEARTBEAT_LLM_COOLDOWN_REPORTED_UNTIL = until

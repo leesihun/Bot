@@ -1,78 +1,69 @@
 """
-Generate a human-readable Markdown snapshot of all DB state.
+Generate a human-readable Markdown snapshot of all state.
 
-Called after any memory or schedule change so data/status.md
-stays in sync with SQLite without replacing the DB.
+Written to data/status.md after any memory or schedule change.
+Reads from files (memory.md, schedules.json, history/) — no SQLite.
 """
 import os
 import logging
 from datetime import datetime, timezone
 
-import aiosqlite
 import config
+from core import memory_file as mem_file
+from core import scheduled as sched_store
+from core import skills as skills_mod
 
 logger = logging.getLogger(__name__)
 
 STATUS_PATH = os.path.join(os.path.dirname(config.DB_PATH), "status.md")
 
 
-async def refresh(db: aiosqlite.Connection) -> None:
-    """Rewrite data/status.md with current memories and schedules."""
+async def refresh() -> None:
+    """Rewrite data/status.md with current memories, schedules, and skills."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     sections = [f"# Hoonbot Status\n\n_Auto-generated at {now} — do not edit, changes will be overwritten._\n"]
 
-    # --- Memories (skip internal _system entries) ---
+    # --- Memories (from data/memory.md) ---
     sections.append("## Memories\n")
-    async with db.execute(
-        "SELECT key, value, tags, updated_at FROM memory ORDER BY updated_at DESC"
-    ) as cur:
-        rows = await cur.fetchall()
-    user_rows = [(k, v, t, u) for k, v, t, u in rows if "_system" not in (t or "")]
-    if user_rows:
-        for key, value, tags, updated in user_rows:
-            tag_part = f" `[{tags}]`" if tags else ""
-            sections.append(f"- **{key}**: {value}{tag_part}  _(updated {updated[:10]})_")
+    entries = mem_file.list_all()
+    if entries:
+        for entry in entries:
+            tag_part = f" `[{entry['tags']}]`" if entry.get("tags") else ""
+            sections.append(f"- **{entry['key']}**: {entry['value']}{tag_part}")
     else:
         sections.append("_No memories stored._")
 
     sections.append("")
 
-    # --- Scheduled Jobs ---
+    # --- Scheduled Jobs (from data/schedules.json) ---
     sections.append("## Scheduled Jobs\n")
-    async with db.execute(
-        "SELECT id, name, cron, once_at, room_id, prompt, enabled, last_run FROM scheduled_jobs ORDER BY id"
-    ) as cur:
-        rows = await cur.fetchall()
-    if rows:
-        sections.append("| ID | Name | Type | Schedule | Room | Prompt | Enabled | Last Run |")
-        sections.append("|---|---|---|---|---|---|---|---|")
-        for id_, name, cron, once_at, room_id, prompt, enabled, last_run in rows:
-            stype = "recurring" if cron else "one-time"
-            schedule = cron if cron else once_at
-            status = "yes" if enabled else "no"
-            lr = last_run[:16] if last_run else "never"
-            sections.append(f"| {id_} | {name} | {stype} | `{schedule}` | {room_id} | {prompt} | {status} | {lr} |")
+    jobs = await sched_store.list_jobs()
+    if jobs:
+        sections.append("| ID | Name | Type | Schedule | Room | Prompt | Last Run |")
+        sections.append("|---|---|---|---|---|---|---|")
+        for j in jobs:
+            stype = "recurring" if j["cron"] else "one-time"
+            schedule = j["cron"] if j["cron"] else j["once_at"]
+            lr = j["last_run"][:16] if j["last_run"] else "never"
+            sections.append(f"| {j['id']} | {j['name']} | {stype} | `{schedule}` | {j['room_id']} | {j['prompt']} | {lr} |")
     else:
         sections.append("_No scheduled jobs._")
 
     sections.append("")
 
-    # --- Room History Stats ---
+    # --- Conversation History Stats (from data/history/) ---
     sections.append("## Conversation History\n")
-    async with db.execute(
-        "SELECT room_id, COUNT(*) as cnt, MAX(timestamp) as latest FROM room_history GROUP BY room_id ORDER BY room_id"
-    ) as cur:
-        rows = await cur.fetchall()
-    if rows:
-        for room_id, count, latest in rows:
-            latest_short = latest[:16] if latest else "?"
-            sections.append(f"- Room {room_id}: {count} messages (latest: {latest_short})")
+    from core import history as hist_store
+    rooms = await hist_store.get_active_rooms()
+    if rooms:
+        for room_id in sorted(rooms):
+            count = await hist_store.get_count(room_id)
+            sections.append(f"- Room {room_id}: {count} messages")
     else:
         sections.append("_No conversation history._")
 
     # --- Skills ---
     sections.append("## Skills\n")
-    from core import skills as skills_mod
     skill_names = skills_mod.list_skills()
     if skill_names:
         for name in skill_names:

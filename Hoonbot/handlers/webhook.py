@@ -21,7 +21,6 @@ import json
 import logging
 import re
 
-import aiosqlite
 from fastapi import APIRouter, HTTPException, Request
 
 import config
@@ -35,21 +34,14 @@ from core import skills as skills_mod
 from core import daily_log
 from core import notify
 from core import tools as tools_mod
+from core import memory_file as mem_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Shared DB connection injected from hoonbot.py at startup
-_db: aiosqlite.Connection = None
-
 # Per-room debounce: tracks pending tasks and last message timestamp
 _room_debounce: dict = {}  # room_id -> {"task": asyncio.Task | None, "content": str, "sender": str}
 _DEBOUNCE_SECONDS = 1.5  # Wait this long after last message before processing
-
-
-def set_db(db: aiosqlite.Connection) -> None:
-    global _db
-    _db = db
 
 
 @router.post("/webhook")
@@ -124,25 +116,20 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str) -> None:
 
 async def process_message(room_id: int, content: str, sender_name: str) -> None:
     """Core message processing pipeline."""
-    db = _db
-    if db is None:
-        logger.error("[Webhook] Database not initialized")
-        return
-
     # 1. Typing indicator
     await messenger.send_typing(room_id)
 
     try:
         # 2. Load context
         soul = llm.load_soul()
-        history = await hist_store.get_history(db, room_id)
-        memory_ctx = await mem_store.format_for_prompt(db)
+        history = await hist_store.get_history(room_id)
+        memory_ctx = await mem_store.format_for_prompt(None)
 
         # 3. Build message list and call LLM with tool calling enabled
         messages = llm.build_messages(soul, history, content, memory_ctx)
 
         async def _tool_executor(tool_name: str, args: dict) -> str:
-            return await tools_mod.execute(db, tool_name, args, room_id=room_id)
+            return await tools_mod.execute(tool_name, args, room_id=room_id)
 
         raw_reply = await llm.chat(
             messages,
@@ -154,20 +141,20 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
         # Also handles skills/daily_log/notify which are not yet tools.
         mem_commands = mem_store.parse_memory_commands(raw_reply)
         for cmd in mem_commands:
-            await mem_store.save(db, cmd["key"], cmd["value"], cmd["tags"])
+            mem_file.save(cmd["key"], cmd["value"], cmd["tags"])
             logger.info(f"[Memory] Saved: {cmd['key']} = {cmd['value']}")
 
         # 4b. Parse and execute memory delete commands
         del_commands = mem_store.parse_memory_delete_commands(raw_reply)
         for key in del_commands:
-            await mem_store.delete(db, key)
+            mem_file.delete(key)
             logger.info(f"[Memory] Deleted: {key}")
 
         # 4c. Parse and create scheduled jobs
         sched_commands = sched_store.parse_schedule_commands(raw_reply)
         for cmd in sched_commands:
             job_id = await sched_store.add_job(
-                db, cmd["name"], room_id, cmd["prompt"],
+                cmd["name"], room_id, cmd["prompt"],
                 cron=cmd["cron"], once_at=cmd["once_at"],
             )
             logger.info(f"[Schedule] Created job #{job_id}: {cmd['name']}")
@@ -190,7 +177,7 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
 
         # 4g. Refresh human-readable status file if anything changed
         if mem_commands or del_commands or sched_commands or skill_commands:
-            await status_file.refresh(db)
+            await status_file.refresh()
 
         # 5. Strip all command tags from the visible reply
         reply = mem_store.strip_memory_commands(raw_reply)
@@ -203,8 +190,8 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
             reply = "..."
 
         # 6. Persist the exchange
-        await hist_store.add_message(db, room_id, "user", content)
-        await hist_store.add_message(db, room_id, "assistant", reply)
+        await hist_store.add_message(room_id, "user", content)
+        await hist_store.add_message(room_id, "assistant", reply)
 
         # 7. Send reply
         await messenger.send_message(room_id, reply)
@@ -226,20 +213,7 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
 
 @router.post("/webhook/incoming/{path:path}")
 async def handle_incoming_webhook(path: str, request: Request):
-    """Accept POST triggers from external services (GitHub, calendar, etc.).
-
-    Converts the payload into a synthetic message and routes it through
-    the normal process_message pipeline, delivered to the home room.
-
-    Authentication: set HOONBOT_WEBHOOK_SECRET env var and send it in
-    the X-Webhook-Secret header. Leave unset to disable auth (local-only use).
-
-    Body (JSON):
-      { "message": "Optional human-readable description", ...any data }
-
-    If "message" is provided it is used as the content; otherwise the full
-    JSON payload is pretty-printed.
-    """
+    """Accept POST triggers from external services (GitHub, calendar, etc.)."""
     if config.WEBHOOK_INCOMING_SECRET:
         secret = request.headers.get("x-webhook-secret", "")
         if secret != config.WEBHOOK_INCOMING_SECRET:

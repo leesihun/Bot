@@ -119,21 +119,17 @@ async def list_all(db: aiosqlite.Connection, tag: Optional[str] = None) -> List[
 async def format_for_prompt(db: aiosqlite.Connection) -> str:
     """Return all memories + extra reference docs as a string for the system prompt.
 
-    Memories are ordered by recency (most recently updated first) so the LLM
-    naturally gives more weight to fresh information.
+    Memory is loaded from data/memory.md (file-based store).
+    SQLite memory table is no longer used for user-visible entries.
     """
+    from core import memory_file as mem_file
+
     parts = []
 
-    # --- SQLite memories (temporal order, skip internal _system entries) ---
-    rows = await list_all(db)
-    user_rows = [r for r in rows if "_system" not in r["tags"]]
-    if user_rows:
-        lines = ["## Persistent Memory\n"]
-        for r in user_rows:
-            tag_suffix = f" [{r['tags']}]" if r["tags"] else ""
-            age = _format_age(r["updated_at"])
-            lines.append(f"- {r['key']}: {r['value']}{tag_suffix}  _({age})_")
-        parts.append("\n".join(lines))
+    # --- File-based memory (data/memory.md) ---
+    file_mem = mem_file.load()
+    if file_mem:
+        parts.append(file_mem)
 
     # --- Extra reference paths ---
     extra = _load_extra_paths()

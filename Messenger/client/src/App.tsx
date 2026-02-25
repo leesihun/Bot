@@ -25,7 +25,7 @@ function MainLayout() {
         <div className="w-16 bg-gray-900 flex flex-col items-center py-4 gap-1 flex-shrink-0">
           {/* Logo */}
           <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white font-bold text-lg mb-4">
-            심
+            H
           </div>
 
           {/* Chat Tab */}

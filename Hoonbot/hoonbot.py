@@ -2,42 +2,37 @@
 Hoonbot — entry point.
 
 Startup sequence:
-1. Initialize SQLite database (create tables)
-2. Register bot with Messenger (get / restore API key)
-3. Register webhook subscription
-4. Start heartbeat scheduler
-5. Serve FastAPI on HOONBOT_PORT
+1. Register bot with Messenger (get / restore API key)
+2. Register webhook subscription
+3. Start heartbeat scheduler
+4. Serve FastAPI on HOONBOT_PORT
+
+All state (memory, history, schedules) is stored in plain files under data/.
+No SQLite or database required.
 """
 import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 
-import aiosqlite
 import httpx
 import uvicorn
 from fastapi import FastAPI
 
 import config
-from core import history as hist_store
-from core import memory as mem_store
 from core import messenger
 from core import scheduler
 from core import heartbeat
-from core import scheduled as sched_store
 from core import status_file
 from core.retry import with_retry
 from handlers.health import router as health_router
-from handlers.webhook import router as webhook_router, set_db, process_message
+from handlers.webhook import router as webhook_router, process_message
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("hoonbot")
-
-# Shared DB — opened once and reused across all requests
-_db: aiosqlite.Connection = None
 
 # Key storage file so we survive restarts without re-registering
 _KEY_FILE = os.path.join(os.path.dirname(__file__), "data", ".apikey")
@@ -57,7 +52,7 @@ def _save_key(key: str) -> None:
         f.write(key)
 
 
-async def _catch_up(db: aiosqlite.Connection) -> None:
+async def _catch_up() -> None:
     """
     On startup, find the last unanswered human message in each room Hoonbot
     belongs to and process it — handles messages sent while Hoonbot was offline.
@@ -77,7 +72,6 @@ async def _catch_up(db: aiosqlite.Connection) -> None:
         if not messages:
             continue
 
-        # Find the last human message and whether Hoonbot replied after it
         last_human_idx = -1
         for i, msg in enumerate(messages):
             if (
@@ -89,9 +83,8 @@ async def _catch_up(db: aiosqlite.Connection) -> None:
                 last_human_idx = i
 
         if last_human_idx == -1:
-            continue  # No human messages
+            continue
 
-        # Did Hoonbot already reply after the last human message?
         hoonbot_replied = any(
             msg.get("senderName") == config.MESSENGER_BOT_NAME
             for msg in messages[last_human_idx + 1:]
@@ -108,17 +101,8 @@ async def _catch_up(db: aiosqlite.Connection) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _db
-
-    # --- Database ---
+    # Ensure data directory exists
     os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
-    _db = await aiosqlite.connect(config.DB_PATH)
-    await _db.execute("PRAGMA journal_mode=WAL")
-    await hist_store.init_history(_db)
-    await mem_store.init_memory(_db)
-    await sched_store.init_scheduled(_db)
-    set_db(_db)
-    logger.info(f"[DB] Opened: {config.DB_PATH}")
 
     # --- Bot registration ---
     saved_key = _load_saved_key()
@@ -178,7 +162,7 @@ async def lifespan(app: FastAPI):
     # --- Heartbeat ---
     if config.HEARTBEAT_ENABLED:
         async def _tick():
-            await heartbeat.tick(_db)
+            await heartbeat.tick()
 
         scheduler.start()
         scheduler.add_interval_job(_tick, config.HEARTBEAT_INTERVAL_SECONDS, "heartbeat")
@@ -187,18 +171,17 @@ async def lifespan(app: FastAPI):
         logger.info("[Heartbeat] Disabled")
 
     # --- Initial status snapshot ---
-    await status_file.refresh(_db)
+    await status_file.refresh()
 
     logger.info(f"[Hoonbot] Ready on port {config.HOONBOT_PORT}")
 
     # --- Catch up on missed messages ---
-    asyncio.create_task(_catch_up(_db))
+    asyncio.create_task(_catch_up())
 
     yield
 
     # --- Shutdown ---
     scheduler.shutdown()
-    await _db.close()
     logger.info("[Hoonbot] Shutdown complete")
 
 
