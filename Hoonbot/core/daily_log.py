@@ -2,7 +2,7 @@
 
 Inspired by OpenClaw's memory/YYYY-MM-DD.md approach.
 The LLM appends notes via [DAILY_LOG: ...] commands.
-Recent logs (today + yesterday) are injected into LLM context so Hoonbot
+Recent logs (last 3 days) are injected into LLM context so Hoonbot
 has a narrative of "what happened" without relying on chat history alone.
 
 Files live at: data/memory/YYYY-MM-DD.md
@@ -17,7 +17,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-LOGS_DIR = os.path.join(os.path.dirname(config.DB_PATH), "memory")
+LOGS_DIR = os.path.join(config.DATA_DIR, "memory")
 
 
 def _log_path(date: datetime) -> str:

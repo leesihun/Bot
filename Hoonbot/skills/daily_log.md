@@ -3,7 +3,7 @@ name: daily_log
 description: Append important notes to today's daily log for cross-session narrative memory
 ---
 
-You have access to an append-only daily log at `data/memory/YYYY-MM-DD.md`. Recent logs (today + yesterday) are already included in your context above under **## Daily Log**.
+You have access to an append-only daily log at `data/memory/YYYY-MM-DD.md`. Recent logs (last 3 days) are already included in your context above under **## Daily Log**.
 
 To append a note to today's log, emit at the end of your response:
 

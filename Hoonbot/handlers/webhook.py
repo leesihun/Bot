@@ -30,6 +30,7 @@ from core import memory as mem_store
 from core import messenger
 from core import scheduled as sched_store
 from core import status_file
+from core import context_file
 from core import skills as skills_mod
 from core import daily_log
 from core import notify
@@ -120,10 +121,12 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
     await messenger.send_typing(room_id)
 
     try:
-        # 2. Load context
+        # 2. Load context — memory.md (memories + daily logs) + context.md (time + sysinfo)
         soul = llm.load_soul()
         history = await hist_store.get_history(room_id)
-        memory_ctx = await mem_store.format_for_prompt(None)
+        mem_ctx = await mem_store.format_for_prompt()
+        live_ctx = await context_file.refresh()
+        memory_ctx = "\n\n".join(p for p in [mem_ctx, live_ctx] if p)
 
         # 3. Build message list and call LLM with tool calling enabled
         messages = llm.build_messages(soul, history, content, memory_ctx)

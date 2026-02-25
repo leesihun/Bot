@@ -1,135 +1,58 @@
-"""Persistent key-value memory store backed by SQLite FTS5."""
+"""Memory utilities: prompt assembly, command-tag parsing, and extra-path loading.
+
+This module assembles the 'memory side' of the LLM context (persistent memory,
+daily logs, schedules, extra reference docs) and provides regex-based parsing
+for [MEMORY_SAVE] / [MEMORY_DELETE] command tags (fallback for LLMs without
+tool-calling support).
+
+Actual memory storage is handled by memory_file.py (data/memory.md).
+"""
 import os
 import re
 import logging
-from datetime import datetime, timezone
-from typing import List, Dict, Optional
+from typing import List, Dict
 
-import aiosqlite
 import config
 
 logger = logging.getLogger(__name__)
 
 
-async def init_memory(db: aiosqlite.Connection) -> None:
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS memory (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            key        TEXT    NOT NULL UNIQUE,
-            value      TEXT    NOT NULL,
-            tags       TEXT    NOT NULL DEFAULT '',
-            created_at TEXT    NOT NULL,
-            updated_at TEXT    NOT NULL
-        )
-    """)
-    # FTS5 virtual table for full-text search over key + value + tags
-    await db.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-            key, value, tags,
-            content='memory', content_rowid='id'
-        )
-    """)
-    # Keep FTS in sync via triggers
-    await db.execute("""
-        CREATE TRIGGER IF NOT EXISTS memory_ai AFTER INSERT ON memory BEGIN
-            INSERT INTO memory_fts(rowid, key, value, tags)
-            VALUES (new.id, new.key, new.value, new.tags);
-        END
-    """)
-    await db.execute("""
-        CREATE TRIGGER IF NOT EXISTS memory_au AFTER UPDATE ON memory BEGIN
-            INSERT INTO memory_fts(memory_fts, rowid, key, value, tags)
-            VALUES ('delete', old.id, old.key, old.value, old.tags);
-            INSERT INTO memory_fts(rowid, key, value, tags)
-            VALUES (new.id, new.key, new.value, new.tags);
-        END
-    """)
-    await db.execute("""
-        CREATE TRIGGER IF NOT EXISTS memory_ad AFTER DELETE ON memory BEGIN
-            INSERT INTO memory_fts(memory_fts, rowid, key, value, tags)
-            VALUES ('delete', old.id, old.key, old.value, old.tags);
-        END
-    """)
-    await db.commit()
+# ---------------------------------------------------------------------------
+# Prompt assembly
+# ---------------------------------------------------------------------------
 
 
-async def save(db: aiosqlite.Connection, key: str, value: str, tags: List[str] = None) -> None:
-    now = datetime.now(timezone.utc).isoformat()
-    tags_str = ",".join(tags or [])
-    await db.execute(
-        """INSERT INTO memory (key, value, tags, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(key) DO UPDATE SET
-               value = excluded.value,
-               tags = excluded.tags,
-               updated_at = excluded.updated_at""",
-        (key, value, tags_str, now, now),
-    )
-    await db.commit()
+async def format_for_prompt() -> str:
+    """Return memories + daily logs + schedules + extra reference docs for the system prompt.
 
-
-async def delete(db: aiosqlite.Connection, key: str) -> bool:
-    """Delete a memory by key. Returns True if a row was deleted."""
-    cursor = await db.execute("DELETE FROM memory WHERE key = ?", (key,))
-    await db.commit()
-    return cursor.rowcount > 0
-
-
-async def clear_all(db: aiosqlite.Connection) -> int:
-    """Delete all memories. Returns count of deleted rows."""
-    cursor = await db.execute("DELETE FROM memory")
-    await db.commit()
-    return cursor.rowcount
-
-
-async def recall(db: aiosqlite.Connection, key: str) -> Optional[str]:
-    async with db.execute("SELECT value FROM memory WHERE key = ?", (key,)) as cur:
-        row = await cur.fetchone()
-    return row[0] if row else None
-
-
-async def search(db: aiosqlite.Connection, query: str, limit: int = 10) -> List[Dict]:
-    async with db.execute(
-        """SELECT m.key, m.value, m.tags, m.updated_at
-           FROM memory_fts f JOIN memory m ON f.rowid = m.id
-           WHERE memory_fts MATCH ?
-           ORDER BY rank LIMIT ?""",
-        (query, limit),
-    ) as cur:
-        rows = await cur.fetchall()
-    return [{"key": r[0], "value": r[1], "tags": r[2], "updated_at": r[3]} for r in rows]
-
-
-async def list_all(db: aiosqlite.Connection, tag: Optional[str] = None) -> List[Dict]:
-    # Order by updated_at DESC — most recently updated memories first (temporal relevance)
-    if tag:
-        async with db.execute(
-            "SELECT key, value, tags, updated_at FROM memory WHERE tags LIKE ? ORDER BY updated_at DESC",
-            (f"%{tag}%",),
-        ) as cur:
-            rows = await cur.fetchall()
-    else:
-        async with db.execute(
-            "SELECT key, value, tags, updated_at FROM memory ORDER BY updated_at DESC"
-        ) as cur:
-            rows = await cur.fetchall()
-    return [{"key": r[0], "value": r[1], "tags": r[2], "updated_at": r[3]} for r in rows]
-
-
-async def format_for_prompt(db: aiosqlite.Connection) -> str:
-    """Return all memories + extra reference docs as a string for the system prompt.
-
-    Memory is loaded from data/memory.md (file-based store).
-    SQLite memory table is no longer used for user-visible entries.
+    This is the 'memory.md' side of context — everything persistent.
+    The ephemeral side (current time, sysinfo) is in context_file.
     """
     from core import memory_file as mem_file
+    from core import daily_log
+    from core import scheduled as sched_store
 
     parts = []
 
-    # --- File-based memory (data/memory.md) ---
+    # --- Persistent memory (data/memory.md) ---
     file_mem = mem_file.load()
     if file_mem:
         parts.append(file_mem)
+
+    # --- Daily logs (data/memory/YYYY-MM-DD.md, last 3 days) ---
+    logs = daily_log.load_recent_logs(days=3)
+    if logs:
+        parts.append(logs)
+
+    # --- Scheduled jobs (data/schedules.json) ---
+    jobs = await sched_store.list_jobs()
+    if jobs:
+        lines = ["## Scheduled Jobs\n"]
+        for j in jobs:
+            schedule = j["cron"] if j["cron"] else f"once at {j['once_at']}"
+            lr = f", last ran {j['last_run'][:16]}" if j["last_run"] else ""
+            lines.append(f"- #{j['id']} **{j['name']}**: {schedule} → {j['prompt']}{lr}")
+        parts.append("\n".join(lines))
 
     # --- Extra reference paths ---
     extra = _load_extra_paths()
@@ -139,20 +62,9 @@ async def format_for_prompt(db: aiosqlite.Connection) -> str:
     return "\n\n".join(parts)
 
 
-def _format_age(updated_at: str) -> str:
-    """Convert ISO timestamp to human-readable age string."""
-    try:
-        dt = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
-        now = datetime.now(timezone.utc)
-        days = (now - dt).days
-        if days == 0:
-            return "today"
-        elif days == 1:
-            return "yesterday"
-        else:
-            return f"{days}d ago"
-    except Exception:
-        return updated_at[:10]
+# ---------------------------------------------------------------------------
+# Extra reference docs
+# ---------------------------------------------------------------------------
 
 
 def _load_extra_paths() -> str:
@@ -183,6 +95,11 @@ def _try_load_file(path: str, sections: list) -> None:
             sections.append(f"### {os.path.basename(path)}\n\n{content}")
     except Exception as e:
         logger.warning(f"[Memory] Extra path load failed {path}: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Command-tag parsing (fallback for LLMs without tool calling)
+# ---------------------------------------------------------------------------
 
 
 def parse_memory_commands(text: str) -> List[Dict]:

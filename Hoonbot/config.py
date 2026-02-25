@@ -13,7 +13,7 @@ MESSENGER_URL = (
     else f"http://localhost:{MESSENGER_PORT}"
 )
 MESSENGER_BOT_NAME = os.environ.get("HOONBOT_BOT_NAME", "Hoonbot")
-MESSENGER_API_KEY = ""  # Populated at runtime after bot registration; persisted in DB
+MESSENGER_API_KEY = ""  # Populated at runtime after bot registration; persisted in data/.apikey
 MESSENGER_HOME_ROOM_ID = int(os.environ.get("HOONBOT_HOME_ROOM_ID", 1))
 
 # --- LLM API ---
@@ -32,7 +32,7 @@ LLM_API_AGENT_TYPE = "auto"  # chat | react | plan_execute | auto
 
 # --- Storage ---
 SOUL_PATH = os.path.join(os.path.dirname(__file__), "SOUL.md")
-DB_PATH = os.path.join(os.path.dirname(__file__), "data", "hoonbot.db")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 MAX_HISTORY_MESSAGES = 50  # Per room
 
 # --- Message limits ---

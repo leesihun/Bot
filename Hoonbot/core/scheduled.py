@@ -15,7 +15,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-_SCHEDULES_FILE = os.path.join(os.path.dirname(config.DB_PATH), "schedules.json")
+_SCHEDULES_FILE = os.path.join(config.DATA_DIR, "schedules.json")
 
 
 # ---------------------------------------------------------------------------

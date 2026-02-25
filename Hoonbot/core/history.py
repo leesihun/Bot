@@ -6,7 +6,7 @@ from typing import Dict, List
 
 import config
 
-_HISTORY_DIR = os.path.join(os.path.dirname(config.DB_PATH), "history")
+_HISTORY_DIR = os.path.join(config.DATA_DIR, "history")
 
 
 def _room_file(room_id: int) -> str:

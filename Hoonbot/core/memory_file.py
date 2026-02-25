@@ -23,7 +23,7 @@ import config
 
 logger = logging.getLogger(__name__)
 
-_DATA_DIR = os.path.dirname(config.DB_PATH)
+_DATA_DIR = config.DATA_DIR
 MEMORY_FILE_PATH = os.path.join(_DATA_DIR, "memory.md")
 _STATE_FILE = os.path.join(_DATA_DIR, "state.json")
 

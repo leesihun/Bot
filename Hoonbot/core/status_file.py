@@ -15,7 +15,7 @@ from core import skills as skills_mod
 
 logger = logging.getLogger(__name__)
 
-STATUS_PATH = os.path.join(os.path.dirname(config.DB_PATH), "status.md")
+STATUS_PATH = os.path.join(config.DATA_DIR, "status.md")
 
 
 async def refresh() -> None:

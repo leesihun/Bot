@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 _HEARTBEAT_SYSTEM = """\
 You are Hoonbot running an autonomous background tick. It is now {datetime}.
 
-Below is your full context: persistent memory, recent daily logs, conversation history,
-scheduled jobs, and system status. Read the checklist below for what to check each tick.
+Your full context is injected below: persistent memory (with timestamps), recent daily logs,
+scheduled jobs, current system status, and a checklist of what to check each tick.
 
 Respond ONLY with a single JSON object — no prose before or after:
   {{"action": "none"}}
@@ -47,15 +47,14 @@ Respond ONLY with a single JSON object — no prose before or after:
   {{"action": "schedule", "name": "<short_name>", "cron": "<HH:MM or 5-field cron>", "prompt": "<what to do>"}}
   {{"action": "schedule", "name": "<short_name>", "at": "<YYYY-MM-DD HH:MM>", "prompt": "<what to do>"}}
 
-Be proactive. If there is something useful, interesting, or timely to share with the user,
-do it — send a message or create a task. Only return {{"action": "none"}} if there is
-genuinely nothing worth doing right now.
-Never return the internal probe token as a user-visible message.
+Be proactive. If there is something useful, interesting, or timely to act on, do it.
+Only return {{"action": "none"}} if there is genuinely nothing worth doing right now.
+Never echo the internal probe token as a user-visible message.
 """
 
 _TASK_EXECUTOR_SYSTEM = """\
 You are Hoonbot executing a background task. Complete the following task and return a concise
-summary of the result. Use your tools (web search, code execution, etc.) as needed.
+summary of the result. You can save important information using the save_memory tool.
 
 Task: {task}
 """
@@ -90,15 +89,28 @@ async def _run_scheduled_jobs(local_now: datetime = None) -> None:
         logger.info(f"[Schedule] Executing job #{job['id']}: {job['name']}")
         try:
             soul = llm.load_soul()
-            messages = [
-                {"role": "system", "content": soul},
-                {"role": "user", "content": f"Execute this scheduled task: {job['prompt']}"},
-            ]
+            mem_ctx = await mem_store.format_for_prompt()
+            live_ctx = await context_file.refresh()
+            memory_ctx = "\n\n".join(p for p in [mem_ctx, live_ctx] if p)
+            history = await hist_store.get_history(room_id)
+
+            from core import tools as tools_mod
+            messages = llm.build_messages(
+                soul, history,
+                f"Execute this scheduled task: {job['prompt']}",
+                memory_ctx,
+            )
+
+            async def _tool_executor(tool_name: str, args: dict) -> str:
+                return await tools_mod.execute(tool_name, args, room_id=room_id)
+
             result = await llm.chat(
                 messages,
                 agent_type="chat",
                 timeout_seconds=45,
                 max_attempts=1,
+                tools=tools_mod.HOONBOT_TOOLS,
+                tool_executor=_tool_executor,
             )
             await _process_llm_commands(result)
             reply = _strip_llm_commands(result)
@@ -141,11 +153,13 @@ async def tick() -> None:
     await _maybe_compaction_flushes()
 
     try:
-        ctx = await context_file.refresh()
+        mem_ctx = await mem_store.format_for_prompt()
+        live_ctx = await context_file.refresh()
+        full_ctx = "\n\n".join(p for p in [mem_ctx, live_ctx] if p)
         history = await hist_store.get_history(room_id)
 
         system = _HEARTBEAT_SYSTEM.format(datetime=now)
-        system_with_ctx = system + "\n\n" + ctx if ctx else system
+        system_with_ctx = system + "\n\n" + full_ctx if full_ctx else system
 
         messages = [{"role": "system", "content": system_with_ctx}]
         if history:
@@ -321,6 +335,8 @@ async def _maybe_compaction_flushes() -> None:
         soul = llm.load_soul()
 
         try:
+            from core import tools as tools_mod
+
             flush_messages = [
                 {
                     "role": "system",
@@ -329,7 +345,7 @@ async def _maybe_compaction_flushes() -> None:
                         "Your conversation history for this room is approaching its storage limit. "
                         "Older messages will soon be dropped. Review the recent conversation below "
                         "and save any important long-term facts, preferences, decisions, or context "
-                        "using [MEMORY_SAVE: key=..., value=..., tags=...] commands. "
+                        "using the save_memory tool. "
                         "Focus only on information worth keeping across sessions. "
                         "Do not save trivial or transient details."
                     ),
@@ -340,12 +356,19 @@ async def _maybe_compaction_flushes() -> None:
                     "content": "Save important memories before older messages are cleared.",
                 },
             ]
+
+            async def _tool_executor(tool_name: str, args: dict) -> str:
+                return await tools_mod.execute(tool_name, args, room_id=room_id)
+
             raw = await llm.chat(
                 flush_messages,
                 agent_type="chat",
                 timeout_seconds=45,
                 max_attempts=1,
+                tools=tools_mod.HOONBOT_TOOLS,
+                tool_executor=_tool_executor,
             )
+            # Fallback: also parse command tags in case LLM didn't use tools
             mem_commands = mem_store.parse_memory_commands(raw)
             for cmd in mem_commands:
                 mem_file.save(cmd["key"], cmd["value"], cmd["tags"])

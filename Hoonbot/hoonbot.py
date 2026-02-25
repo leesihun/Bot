@@ -102,7 +102,7 @@ async def _catch_up() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure data directory exists
-    os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
+    os.makedirs(config.DATA_DIR, exist_ok=True)
 
     # --- Bot registration ---
     saved_key = _load_saved_key()

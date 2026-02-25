@@ -142,10 +142,12 @@ def build_messages(
 ) -> List[Dict[str, str]]:
     """
     Assemble the full messages list:
-    [system (SOUL + memory + skills + daily log), ...history, user]
+    [system (SOUL + memory_context + skills), ...history, user]
+
+    memory_context should contain both the persistent memory (memory.md)
+    and the live context (context.md) — assembled by the caller.
     """
     from core import skills as skills_mod
-    from core import daily_log
 
     system_parts = [soul]
     if memory_context:
@@ -155,11 +157,6 @@ def build_messages(
     skills_ctx = skills_mod.load_skills()
     if skills_ctx:
         system_parts.append(skills_ctx)
-
-    # Recent daily logs (today + yesterday) for narrative context
-    log_ctx = daily_log.load_recent_logs()
-    if log_ctx:
-        system_parts.append(log_ctx)
 
     system_content = "\n\n".join(system_parts)
 
