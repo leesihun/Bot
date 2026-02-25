@@ -142,7 +142,7 @@ def build_messages(
 ) -> List[Dict[str, str]]:
     """
     Assemble the full messages list:
-    [system (SOUL + memory_context + skills), ...history, user]
+    [...history, system (SOUL + memory_context + skills), user]
 
     memory_context should contain both the persistent memory (memory.md)
     and the live context (context.md) — assembled by the caller.
@@ -160,7 +160,8 @@ def build_messages(
 
     system_content = "\n\n".join(system_parts)
 
-    messages = [{"role": "system", "content": system_content}]
-    messages.extend(history)
+    messages = list(history)
+    # Inject SOUL right before the current user command.
+    messages.append({"role": "system", "content": system_content})
     messages.append({"role": "user", "content": user_content})
     return messages
