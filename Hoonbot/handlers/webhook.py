@@ -113,9 +113,9 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
     try:
         # Validate configuration
         if not config.LLM_API_KEY:
-            raise ValueError("LLM_API_KEY is not set. Set it with: export LLM_API_KEY='your_token'")
+            raise ValueError("LLM_API_KEY is not configured. Run: python setup.py")
         if not config.LLM_MODEL:
-            raise ValueError("LLM_MODEL is not set. Set it with: export LLM_MODEL='your_model'")
+            raise ValueError("LLM_MODEL is not configured. Run: python setup.py")
 
         # Load context
         system_prompt_base = _load_system_prompt()

@@ -29,13 +29,12 @@ This will:
 - Login with default credentials (admin/administrator)
 - Get access token
 - List available models
-- Save to `.env` file
-- Set environment variables
+- Save to `data/.llm_key` and `data/.llm_model`
 
 Example output:
 ```
 [Setup] Connecting to LLM_API_fast at http://localhost:10007
-✓ Successfully obtained access token
+[OK] Successfully obtained access token
 
 Available models:
   1. llama2
@@ -43,9 +42,8 @@ Available models:
   3. neural-chat
 
 Selected: llama2
-✓ Set LLM_API_KEY
-✓ Set LLM_MODEL
-✓ Saved environment variables to .env
+[OK] Saved LLM_API_KEY to data/.llm_key
+[OK] Saved LLM_MODEL to data/.llm_model
 
 Setup Complete!
 ```
@@ -54,13 +52,12 @@ Setup Complete!
 
 ```bash
 cd Hoonbot
-
-# Load environment variables from .env
-source .env
-
-# Start Hoonbot
 python hoonbot.py
 ```
+
+**No environment variables needed!** Credentials are stored in:
+- `data/.llm_key` — API token
+- `data/.llm_model` — Model name
 
 Expected output:
 ```

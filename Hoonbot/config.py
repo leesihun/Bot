@@ -28,8 +28,26 @@ else:
         if USE_CLOUDFLARE
         else f"http://localhost:{LLM_API_PORT}"
     )
-LLM_API_KEY = os.environ.get("LLM_API_KEY", "")  # Bearer token for LLM API auth
-LLM_MODEL = os.environ.get("LLM_MODEL", "default")  # Model to use for chat completions
+# Load LLM API key from file (set via setup.py)
+def _load_llm_api_key() -> str:
+    key_file = os.path.join(os.path.dirname(__file__), "data", ".llm_key")
+    try:
+        with open(key_file, "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+# Load LLM model from file (set via setup.py)
+def _load_llm_model() -> str:
+    model_file = os.path.join(os.path.dirname(__file__), "data", ".llm_model")
+    try:
+        with open(model_file, "r") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+LLM_API_KEY = _load_llm_api_key()  # Bearer token loaded from data/.llm_key
+LLM_MODEL = _load_llm_model()      # Model name loaded from data/.llm_model
 # --- Storage ---
 SOUL_PATH = os.path.join(os.path.dirname(__file__), "SOUL.md")
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
