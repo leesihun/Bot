@@ -124,18 +124,20 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
         # Get absolute path to memory file
         abs_memory_path = os.path.abspath(MEMORY_FILE)
 
-        # Build system prompt: base prompt + memory file location + current memory
-        system_prompt = system_prompt_base
-        system_prompt += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{abs_memory_path}`"
+        # Build context: PROMPT.md + memory location + current memory
+        # NOTE: LLM_API_fast agents inject their own system prompt, so we include
+        # PROMPT.md as the FIRST user message instead to ensure it's read
+        context = system_prompt_base
+        context += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{abs_memory_path}`"
         if memory:
-            system_prompt += f"\n\n## Current Memory Content\n\n{memory}"
+            context += f"\n\n## Current Memory Content\n\n{memory}"
         else:
-            system_prompt += f"\n\n## Current Memory\n\n(No memory saved yet)"
+            context += f"\n\n## Current Memory\n\n(No memory saved yet)"
 
-        # Build messages
+        # Build messages: PROMPT context first, then user message
+        # This ensures PROMPT.md isn't overridden by agent's default system prompt
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": content},
+            {"role": "user", "content": f"{context}\n\n---\n\nUser: {content}"},
         ]
 
         # Call LLM_API_fast with auto agent (has access to all tools)
