@@ -6,18 +6,18 @@ A simplified, tool-driven personal AI assistant that connects Huni Messenger (ch
 
 ### Prerequisites
 
-1. **LLM_API_fast** running:
+1. **LLM_API_fast running:**
    ```bash
    cd ../LLM_API_fast
    python tools_server.py &      # Terminal 1
    python run_backend.py &       # Terminal 2
    ```
 
-2. **Huni Messenger** running on port 3000
+2. **Huni Messenger running on port 3000**
 
 ### Setup (One-Time)
 
-Run the setup script to automatically get LLM_API_KEY:
+Run the setup script to automatically obtain LLM credentials:
 
 ```bash
 cd Hoonbot
@@ -25,27 +25,46 @@ python setup.py
 ```
 
 This will:
-- Connect to LLM_API_fast
+- Connect to LLM_API_fast at http://localhost:10007
 - Login with default credentials (admin/administrator)
-- Get access token
-- List available models
-- Save to `data/.llm_key` and `data/.llm_model`
+- Fetch available models
+- Save token to `data/.llm_key`
+- Save model to `data/.llm_model`
 
 Example output:
 ```
+============================================================
+  Hoonbot Setup
+============================================================
+
 [Setup] Connecting to LLM_API_fast at http://localhost:10007
 [OK] Successfully obtained access token
 
-Available models:
-  1. llama2
-  2. mistral
-  3. neural-chat
+Fetching available models...
 
-Selected: llama2
+Available models:
+  1. claude-opus-4-6
+  2. claude-sonnet-4-6
+  3. claude-haiku-4-5
+
+Selected: claude-opus-4-6
+
+Saving credentials...
 [OK] Saved LLM_API_KEY to data/.llm_key
 [OK] Saved LLM_MODEL to data/.llm_model
 
-Setup Complete!
+============================================================
+  Setup Complete!
+============================================================
+
+Credentials saved to:
+  data/.llm_key    (API token)
+  data/.llm_model  (Model name)
+
+You can now start Hoonbot:
+  python hoonbot.py
+
+No environment variables needed!
 ```
 
 ### Start Hoonbot
@@ -55,8 +74,8 @@ cd Hoonbot
 python hoonbot.py
 ```
 
-**No environment variables needed!** Credentials are stored in:
-- `data/.llm_key` — API token
+**No environment variables needed!** Credentials are loaded from:
+- `data/.llm_key` — LLM API token
 - `data/.llm_model` — Model name
 
 Expected output:
@@ -66,47 +85,47 @@ Expected output:
 [Hoonbot] Ready on port 3939
 ```
 
-## Key Documentation Files
+## Key Documentation
 
-### 📋 [PROMPT.md](PROMPT.md) - System Prompt
-**What it is:** The unified prompt that tells the LLM how to behave, what tools to use, and how to manage memory.
+### 📋 [PROMPT.md](PROMPT.md) — System Prompt
+The unified prompt that tells the LLM how to behave, what tools to use, and how to manage memory.
 
 **Key sections:**
 - Identity and behavior guidelines
-- Memory system instructions (read/write/update)
+- Memory system instructions (read/write)
 - Complete tool documentation
 - When to update memory
-- Webhook handling
+- Webhook handling guidelines
 
-**Usage:** Automatically loaded and injected into every LLM conversation.
+**Automatically loaded and injected into every LLM call.**
 
-### 🏗️ [ARCHITECTURE.md](ARCHITECTURE.md) - System Design
-**What it is:** Complete technical documentation of how Hoonbot works.
+### 🏗️ [ARCHITECTURE.md](ARCHITECTURE.md) — System Design
+Complete technical documentation explaining how Hoonbot works.
 
 **Key sections:**
-- Data flow diagrams
+- System diagrams and data flow
 - Component descriptions
 - File organization
-- Configuration options
+- Configuration reference
 - Startup sequence
 - Troubleshooting guide
 
-**Read this if you want to understand how everything connects.**
+**Read this to understand how everything connects.**
 
-### 🧠 [data/memory.md](data/memory.md) - Persistent Memory
-**What it is:** The single memory file where information persists across conversations.
+### 🧠 [data/memory.md](data/memory.md) — Persistent Memory
+Single memory file where information persists across conversations.
 
 **Features:**
 - Plain Markdown format
-- Automatically injected into every LLM call
+- Automatically injected into every LLM prompt
 - Absolute path provided to LLM
 - Can be edited manually or via file_writer tool
 
-**The LLM uses file_reader to read and file_writer to update this file.**
+**The LLM uses file_reader to read and file_writer to update.**
 
 ## How It Works
 
-### 1. User sends a message in Messenger
+### 1. User sends message in Messenger
 ```
 User → Messenger (port 3000) → Hoonbot (port 3939)
 ```
@@ -115,20 +134,20 @@ User → Messenger (port 3000) → Hoonbot (port 3939)
 ```
 1. Load PROMPT.md (system prompt)
 2. Load data/memory.md (persistent memory)
-3. Build message with absolute path to memory file
+3. Get absolute path to memory file
 4. Call LLM_API_fast with agent_type: auto
 ```
 
 ### 3. LLM uses tools to accomplish the task
 ```
-LLM can use:
-- file_reader     : Read memory and other files
-- file_writer     : Update memory and save files
-- file_navigator  : Explore directories
-- websearch       : Search the web
-- python_coder    : Run Python code
-- rag             : Query documents
-- shell_exec      : Run shell commands
+Available tools:
+- file_reader      : Read memory and other files
+- file_writer      : Update memory and save files
+- file_navigator   : Explore directories
+- websearch        : Search the web
+- python_coder     : Run Python code
+- rag              : Query documents
+- shell_exec       : Run shell commands
 ```
 
 ### 4. LLM returns response to Hoonbot
@@ -140,27 +159,30 @@ LLM response → Hoonbot → Messenger (port 3000) → User
 
 ```
 Hoonbot/
-├── README.md               ← Start here
-├── ARCHITECTURE.md         ← Technical design
-├── PROMPT.md              ← System prompt (unified)
-├── SOUL.md                ← Legacy personality file
+├── README.md                ← Start here
+├── ARCHITECTURE.md          ← Technical design
+├── PROMPT.md               ← System prompt (unified)
+├── SOUL.md                 ← Personality reference (included in PROMPT.md)
 │
-├── hoonbot.py             # Main entry point
-├── config.py              # Configuration
-├── reset.py               # Memory reset utility
-├── test_llm.py            # Test script
+├── hoonbot.py              # Main entry point
+├── config.py               # Configuration
+├── setup.py                # Setup script (automatic credential management)
+├── test_llm.py             # Test script
+├── reset.py                # Memory reset utility
 │
 ├── handlers/
-│   ├── webhook.py         # Message processing
-│   └── health.py          # Health check
+│   ├── webhook.py          # Message processing
+│   └── health.py           # Health check endpoint
 │
 ├── core/
-│   ├── messenger.py       # Messenger API client
-│   └── retry.py           # Retry decorator
+│   ├── messenger.py        # Messenger API client
+│   └── retry.py            # Retry decorator
 │
 └── data/
-    ├── memory.md          # Persistent memory
-    └── .apikey            # Messenger API key (auto-created)
+    ├── memory.md           # Persistent memory (auto-injected)
+    ├── .llm_key            # LLM API token (created by setup.py)
+    ├── .llm_model          # LLM model name (created by setup.py)
+    └── .apikey             # Messenger API key (auto-created)
 ```
 
 ## Configuration
@@ -177,64 +199,84 @@ MESSENGER_PORT=3000
 HOONBOT_BOT_NAME=Hoonbot
 HOONBOT_HOME_ROOM_ID=1
 
-# LLM_API_fast (REQUIRED)
-LLM_API_KEY=your_token_here       # Must set
-LLM_MODEL=your_model_name          # Must set
-LLM_API_URL=http://localhost:10007 # Auto-detected, can override
+# LLM_API_fast (loaded from files, not env vars)
+# Credentials: setup.py saves to data/.llm_key and data/.llm_model
+LLM_API_PORT=10007
+LLM_API_URL=http://localhost:10007  # Can override with env var
 
 # Webhooks (optional)
 HOONBOT_WEBHOOK_SECRET=optional_secret_for_incoming_webhooks
 ```
 
-## Core Concepts
+## Memory System
 
-### Memory System
+### How It Works
 
-**How it works:**
 1. `data/memory.md` is a plain Markdown file
-2. On every LLM call, memory is included in the system prompt
-3. LLM can read the file with `file_reader` tool
-4. LLM can update the file with `file_writer` tool
+2. On every LLM call, memory content is injected into the system prompt
+3. LLM's absolute path to the file is also provided
+4. LLM can read the file with `file_reader` tool
+5. LLM can update the file with `file_writer` tool
 
-**What to save:**
+### What to Save
+
 - User preferences and personal information
 - Important facts and decisions
 - Project status
 - Anything the user says to remember
 
-**Example update flow:**
+### Example Update Flow
+
 ```
 User: "Remember: I'm working on Project X"
      ↓
-LLM sees this
+LLM sees this in conversation
      ↓
-LLM uses file_reader to read memory.md
+LLM uses file_reader to read current memory.md
      ↓
-LLM adds "Project X" entry
+LLM adds "Project X" entry to memory
      ↓
 LLM uses file_writer to save updated memory.md
      ↓
 Next message includes updated memory
 ```
 
-### Tool System
+### Manual Editing
 
-Everything is handled through LLM_API_fast tools. The LLM automatically decides which tool to use:
+Edit `data/memory.md` directly in any text editor:
+```markdown
+# Hoonbot Memory
+
+## User
+- Name: Huni
+- Language: Korean
+- Preferences: [list preferences]
+
+## Projects
+- [Project info]
+
+## Notes
+- [Important facts]
+```
+
+## Tool System
+
+Everything works through LLM_API_fast tools. The LLM automatically decides which tool to use:
 
 - **Need to save information?** → Use file_writer
 - **Need to check saved info?** → Use file_reader
 - **Need to search the web?** → Use websearch
 - **Need to analyze data?** → Use python_coder
-- **Need to run a script?** → Use shell_exec
+- **Need to run a command?** → Use shell_exec
 
 **No custom commands or parsing—just pure tool usage.**
 
-### Webhook Events
+## Webhook Events
 
 External services can trigger Hoonbot by posting to:
 ```
 POST http://localhost:3939/webhook/incoming/<source>
-X-Webhook-Secret: optional_secret
+X-Webhook-Secret: optional_secret (if configured)
 Content-Type: application/json
 
 {
@@ -263,15 +305,14 @@ Hoonbot receives: `[Webhook from github] PR opened: Fix bug in auth...`
 ### Test LLM Connection
 
 ```bash
-export LLM_API_KEY="your_token"
-export LLM_MODEL="your_model"
 python test_llm.py
 ```
 
-Shows:
-- If LLM_API_fast is reachable
-- If the LLM responds
-- If memory update would work
+Tests if:
+- LLM_API_fast is reachable
+- Credentials are properly configured
+- LLM responds to messages
+- Memory file is accessible
 
 ### Reset Memory
 
@@ -279,28 +320,11 @@ Shows:
 # View current memory
 python reset.py --view-memory
 
-# Reset to blank
+# Clear memory (keeps file, makes empty)
 python reset.py --memory
 
-# Reset everything
+# Reset everything (memory, APIkey, etc)
 python reset.py --all
-```
-
-### Manual Memory Editing
-
-Edit `data/memory.md` directly in any text editor:
-```markdown
-# Hoonbot Memory
-
-## User
-- Name: Huni
-- Preferences: [list preferences]
-
-## Projects
-- [Project info]
-
-## Notes
-- [Important facts]
 ```
 
 ## Architecture Overview
@@ -320,9 +344,10 @@ Edit `data/memory.md` directly in any text editor:
 │                                         │
 │  1. Receive message from Messenger      │
 │  2. Load PROMPT.md + memory.md          │
-│  3. Call LLM_API_fast                   │
-│  4. LLM uses tools (file_*, web*, etc)  │
-│  5. Send reply back to Messenger        │
+│  3. Get absolute memory path            │
+│  4. Call LLM_API_fast                   │
+│  5. LLM uses tools automatically        │
+│  6. Send reply back to Messenger        │
 └──────────────┬──────────────────────────┘
                │ HTTP: POST /v1/chat/completions
                │
@@ -342,71 +367,100 @@ Edit `data/memory.md` directly in any text editor:
 
 ## Troubleshooting
 
-### "LLM 서버에 연결할 수 없어요"
+### Setup fails: "Cannot connect to LLM_API_fast"
 
-Can't connect to LLM_API_fast:
-1. `ps aux | grep run_backend` — Check if it's running
-2. `echo $LLM_API_KEY` — Check env var is set
-3. Check LLM_API_URL in config.py matches server
+Make sure LLM_API_fast is running:
+```bash
+ps aux | grep run_backend
+```
+
+Check the port matches in setup.py (default: http://localhost:10007)
+
+### "LLM_API_KEY is not configured"
+
+Run setup.py to create credentials:
+```bash
+python setup.py
+```
+
+Check that files were created:
+```bash
+ls -la data/.llm_key data/.llm_model
+```
 
 ### Memory not updating
 
-LLM not using file_writer:
-1. Check PROMPT.md has clear instructions
-2. Run `python test_llm.py` to test LLM
-3. Check LLM_API_fast logs for tool errors
+The LLM might not be using the file_writer tool:
+
+1. Check PROMPT.md has clear memory update instructions
+2. Run `python test_llm.py` to test LLM functionality
+3. Check LLM_API_fast logs for tool execution errors
+4. Try manually editing `data/memory.md` to verify file is writable
 
 ### Bot not responding
 
-General issues:
-1. Check `docker ps` or `ps aux` — Are all services running?
-2. Check logs in terminal running hoonbot.py
-3. Try sending a simple test message
-4. Check config.py for correct ports
+General troubleshooting:
+
+1. Check all services are running:
+   ```bash
+   ps aux | grep -E "(run_backend|npm|hoonbot)"
+   ```
+
+2. Check logs:
+   ```bash
+   tail -f logs/hoonbot.log
+   ```
+
+3. Test with simple message in Messenger
+
+4. Verify configuration in `config.py`
 
 ## Development
 
-### Add New Feature
+### Add New Capability
 
-Since everything uses LLM_API_fast tools:
-1. Update PROMPT.md with new instructions
-2. No code changes needed
-3. LLM will use appropriate tools automatically
+Since everything uses LLM_API_fast tools, new capabilities are added by:
 
-Example: Add CSV analysis
-- Just mention in PROMPT.md that LLM can use python_coder for CSV
+1. Update PROMPT.md with new instructions/guidelines
+2. LLM automatically uses appropriate tools
+3. No code changes needed
+
+Example: To add CSV analysis
+- Just mention in PROMPT.md that LLM can use python_coder for CSV files
 - LLM will automatically use that tool when needed
 
 ### Modify Memory Format
 
-Edit `data/memory.md` directly or update PROMPT.md guidance.
-No code changes needed.
+Edit `data/memory.md` directly or update PROMPT.md with new guidance. No code changes needed.
 
 ### Add New Webhook Source
 
-No code changes—just post to `/webhook/incoming/<source>` and Hoonbot handles it.
+No code changes—just POST to `/webhook/incoming/<source>` and Hoonbot handles it.
 
 ## Performance Tips
 
 1. **Keep memory.md reasonably sized** — It's included in every prompt
-2. **Use file_navigator to explore** — Don't guess file paths
-3. **Set reasonable timeouts** — Especially for python_coder tasks
-4. **Cache tool results** — If running similar operations
+2. **Use file_navigator** — Don't guess file paths, use the tool to explore
+3. **Set reasonable timeouts** — Especially for long-running tasks
+4. **Monitor token usage** — Memory size affects API costs
 
 ## Security
 
-- **API Key:** Stored in `data/.apikey`, keep it secret
-- **Webhook Secret:** Use for external integrations
-- **File Access:** LLM has access to files via tools, be careful with sensitive paths
-- **Code Execution:** python_coder runs code, validate requests first
+- **LLM API Key:** Stored in `data/.llm_key`, never commit to git
+- **Messenger API Key:** Stored in `data/.apikey`, keep secret
+- **Webhook Secret:** Use for external integrations to verify authenticity
+- **File Access:** LLM has access to files via tools—be careful with sensitive paths
+- **Code Execution:** python_coder runs arbitrary code—validate user requests first
 
 ## Support
 
 Check these files in order:
-1. **ARCHITECTURE.md** — How does it work?
-2. **PROMPT.md** — What are the guidelines?
+
+1. **ARCHITECTURE.md** — How does the system work?
+2. **PROMPT.md** — What are the LLM guidelines?
 3. **config.py** — Is it configured correctly?
 4. **test_llm.py** — Can we reach the LLM?
+5. **Logs** — What errors are in logs/?
 
 ## License & Credits
 
@@ -415,4 +469,4 @@ Hoonbot — Simplified AI Assistant for Huni
 ---
 
 **Last Updated:** 2026-02-26
-**Version:** 1.0 (Simplified Architecture)
+**Version:** 1.0 (Simplified Tool-Driven Architecture)

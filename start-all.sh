@@ -129,6 +129,21 @@ if [ "$MESSENGER_READY" != "true" ]; then
     exit 1
 fi
 
+echo "[4/5] Setting up Hoonbot..."
+cd "$SCRIPT_DIR/Hoonbot"
+# Check if LLM credentials are already set up
+if [ ! -f "data/.llm_key" ] || [ ! -f "data/.llm_model" ]; then
+    echo "  Running setup.py to configure LLM_API_KEY..."
+    python3 setup.py
+    if [ $? -ne 0 ]; then
+        echo "[ERROR] Hoonbot setup failed. Please run setup.py manually."
+        read -p "Press Enter to exit..."
+        exit 1
+    fi
+else
+    echo "  LLM credentials already configured (data/.llm_key, data/.llm_model)"
+fi
+
 echo "[4/5] Starting Hoonbot (port $HOONBOT_PORT)..."
 cd "$SCRIPT_DIR/Hoonbot" && python3 hoonbot.py > "$LOG_DIR/hoonbot.log" 2>&1 &
 
