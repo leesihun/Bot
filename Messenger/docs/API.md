@@ -4,16 +4,16 @@
 
 ## Authentication
 
-### Human Users (IP-based)
+### Human Users (ID-based)
 
-Human clients use IP-based identity. No API key is required for `/auth` and `/rooms` routes.
+Human clients use user IDs after login. No API key is required for `/auth` and `/rooms` routes.
 
 ### Bot Users (API Key)
 
 API routes under `/api` accept either:
 
 - **`x-api-key`** header (recommended for bots)
-- **`senderName`** or **`senderIp`** in body/query (for ad-hoc requests)
+- **`senderId`** or **`senderName`** in body/query (for ad-hoc requests)
 
 ---
 
@@ -31,8 +31,8 @@ API routes under `/api` accept either:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/auth/login` | Login or register by IP + display name |
-| GET | `/auth/check` | Check if current IP has an existing user |
+| POST | `/auth/login` | Login or register by display name |
+| GET | `/auth/check?userId=N` | Check if a specific user ID exists |
 | GET | `/auth/users` | List all users |
 
 ### POST /auth/login

@@ -3,7 +3,7 @@ import { queryAll, queryOne, run } from '../db/index.js';
 
 const router = Router();
 
-// POST /auth/login - IP 기반 로그인/등록
+// POST /auth/login - name-based login/register (ID is the primary identity)
 router.post('/login', (req: Request, res: Response) => {
   const { name } = req.body;
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
@@ -71,12 +71,15 @@ router.get('/users', (_req: Request, res: Response) => {
   );
 });
 
-// GET /auth/check - IP로 기존 사용자 확인 (returns last-used user from this IP)
+// GET /auth/check - ID로 기존 사용자 확인
 router.get('/check', (req: Request, res: Response) => {
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  const cleanIp = ip.replace('::ffff:', '');
-
-  const user = queryOne('SELECT * FROM users WHERE ip = ? ORDER BY updated_at DESC LIMIT 1', [cleanIp]);
+  const userIdParam = (req.query.userId as string | undefined)?.trim();
+  const userId = Number(userIdParam);
+  if (!userIdParam || !Number.isInteger(userId) || userId <= 0) {
+    res.json({ user: null });
+    return;
+  }
+  const user = queryOne('SELECT * FROM users WHERE id = ?', [userId]);
 
   if (user && !user.is_bot) {
     res.json({

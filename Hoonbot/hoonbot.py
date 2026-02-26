@@ -4,11 +4,9 @@ Hoonbot — entry point.
 Startup sequence:
 1. Register bot with Messenger (get / restore API key)
 2. Register webhook subscription
-3. Start heartbeat scheduler
-4. Serve FastAPI on HOONBOT_PORT
+3. Serve FastAPI on HOONBOT_PORT
 
-All state (memory, history, schedules) is stored in plain files under data/.
-No SQLite or database required.
+All state is stored in memory.md and managed via LLM_API_fast tools.
 """
 import asyncio
 import logging
@@ -21,9 +19,6 @@ from fastapi import FastAPI
 
 import config
 from core import messenger
-from core import scheduler
-from core import heartbeat
-from core import status_file
 from core.retry import with_retry
 from handlers.health import router as health_router
 from handlers.webhook import router as webhook_router, process_message
@@ -159,20 +154,6 @@ async def lifespan(app: FastAPI):
             label="Messenger webhook registration (after key refresh)",
         )
 
-    # --- Heartbeat ---
-    if config.HEARTBEAT_ENABLED:
-        async def _tick():
-            await heartbeat.tick()
-
-        scheduler.start()
-        scheduler.add_interval_job(_tick, config.HEARTBEAT_INTERVAL_SECONDS, "heartbeat")
-        logger.info(f"[Heartbeat] Enabled, interval={config.HEARTBEAT_INTERVAL_SECONDS}s")
-    else:
-        logger.info("[Heartbeat] Disabled")
-
-    # --- Initial status snapshot ---
-    await status_file.refresh()
-
     logger.info(f"[Hoonbot] Ready on port {config.HOONBOT_PORT}")
 
     # --- Catch up on missed messages ---
@@ -181,7 +162,6 @@ async def lifespan(app: FastAPI):
     yield
 
     # --- Shutdown ---
-    scheduler.shutdown()
     logger.info("[Hoonbot] Shutdown complete")
 
 

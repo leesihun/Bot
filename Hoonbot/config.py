@@ -28,6 +28,8 @@ else:
         if USE_CLOUDFLARE
         else f"http://localhost:{LLM_API_PORT}"
     )
+LLM_API_KEY = os.environ.get("LLM_API_KEY", "")  # Bearer token for LLM API auth
+LLM_MODEL = os.environ.get("LLM_MODEL", "default")  # Model to use for chat completions
 # --- Storage ---
 SOUL_PATH = os.path.join(os.path.dirname(__file__), "SOUL.md")
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")

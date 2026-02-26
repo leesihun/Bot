@@ -51,16 +51,22 @@ const upload = multer({ storage, limits: { fileSize: 100 * 1024 * 1024 } });
 /**
  * Resolve the sender from (in priority order):
  *   1. x-api-key header (attached by apiKeyAuth middleware)
- *   2. senderName in body or query (globally unique)
- *   3. senderIp in body or query (for bots with unique IPs)
+ *   2. senderId in body or query (strict ID-based identity)
+ *   3. senderName in body or query (globally unique)
  */
 function resolveSender(req: Request): any | null {
   if ((req as any).apiUser) return (req as any).apiUser;
   const { body, query } = req;
+  const senderIdRaw = body.senderId ?? query.senderId;
   const senderName = body.senderName || query.senderName;
-  const senderIp = body.senderIp || query.senderIp;
+  if (senderIdRaw !== undefined && senderIdRaw !== null && String(senderIdRaw).trim() !== '') {
+    const senderId = Number(senderIdRaw);
+    if (Number.isInteger(senderId) && senderId > 0) {
+      return queryOne('SELECT * FROM users WHERE id = ?', [senderId]);
+    }
+    return null;
+  }
   if (senderName) return queryOne('SELECT * FROM users WHERE name = ?', [senderName]);
-  if (senderIp) return queryOne('SELECT * FROM users WHERE ip = ?', [senderIp]);
   return null;
 }
 
@@ -170,7 +176,7 @@ router.post('/send-message', (req: Request, res: Response) => {
 
   const sender = resolveSender(req);
   if (!sender) {
-    res.status(404).json({ error: 'Sender not found. Provide senderName, senderIp, or x-api-key header.' });
+    res.status(404).json({ error: 'Sender not found. Provide senderId, senderName, or x-api-key header.' });
     return;
   }
 
@@ -940,7 +946,7 @@ const VALID_WEBHOOK_EVENTS = ['new_message', 'message_edited', 'message_deleted'
 router.post('/webhooks', (req: Request, res: Response) => {
   const sender = resolveSender(req);
   if (!sender) {
-    res.status(401).json({ error: 'Authentication required (x-api-key, senderName, or senderIp).' });
+    res.status(401).json({ error: 'Authentication required (x-api-key, senderId, or senderName).' });
     return;
   }
 

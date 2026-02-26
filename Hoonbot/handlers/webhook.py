@@ -1,47 +1,47 @@
 """
 Webhook handler — receives new_message events from Messenger and processes them.
 
-Payload shape (from Messenger/server/src/services/webhook.ts):
-{
-  "event": "new_message",
-  "roomId": 1,
-  "timestamp": "...",
-  "data": {
-    "id": 42,
-    "content": "Hello",
-    "type": "text",
-    "senderName": "Lee",
-    "senderId": 3,
-    ...
-  }
-}
+Uses LLM_API_fast agent system to handle all operations (tools, memory updates, etc).
 """
 import asyncio
 import json
 import logging
+import os
 import re
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 
 import config
-from core import history as hist_store
-from core import llm
-from core import memory as mem_store
 from core import messenger
-from core import scheduled as sched_store
-from core import status_file
-from core import context_file
-from core import skills as skills_mod
-from core import daily_log
-from core import notify
-from core import memory_file as mem_file
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Per-room debounce: tracks pending tasks and last message timestamp
-_room_debounce: dict = {}  # room_id -> {"task": asyncio.Task | None, "content": str, "sender": str}
-_DEBOUNCE_SECONDS = 1.5  # Wait this long after last message before processing
+# Per-room debounce
+_room_debounce: dict = {}
+_DEBOUNCE_SECONDS = 1.5
+
+MEMORY_FILE = os.path.join(config.DATA_DIR, "memory.md")
+
+
+def _read_memory() -> str:
+    """Read memory.md, return empty string if not exists."""
+    try:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
+def _load_soul() -> str:
+    """Load SOUL.md as system prompt."""
+    soul_file = os.path.join(os.path.dirname(__file__), "..", "SOUL.md")
+    try:
+        with open(soul_file, "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        return "You are a helpful AI assistant."
 
 
 @router.post("/webhook")
@@ -59,25 +59,19 @@ async def handle_webhook(request: Request):
     sender_name = data.get("senderName") or data.get("sender_name", "")
     is_bot = data.get("isBot") or data.get("is_bot", False)
 
-    # Ignore non-text messages (images, files)
-    if msg_type != "text":
+    if msg_type != "text" or not content:
         return {"ok": True}
 
-    # Ignore empty messages
-    if not content:
-        return {"ok": True}
-
-    # Ignore own messages and other bots
     if sender_name == config.MESSENGER_BOT_NAME or is_bot:
         return {"ok": True}
 
-    # In non-home rooms (group chats), only respond when @mentioned
+    # In non-home rooms, only respond when @mentioned
     is_home = room_id == config.MESSENGER_HOME_ROOM_ID
     mention_tag = f"@{config.MESSENGER_BOT_NAME}"
     if not is_home and mention_tag.lower() not in content.lower():
         return {"ok": True}
 
-    # Strip the @mention from content before processing
+    # Strip @mention
     clean_content = content
     if not is_home:
         clean_content = re.sub(
@@ -86,14 +80,12 @@ async def handle_webhook(request: Request):
         if not clean_content:
             return {"ok": True}
 
-    # Debounce: if multiple messages arrive rapidly, wait and combine
     _schedule_debounced(room_id, clean_content, sender_name)
     return {"ok": True}
 
 
 def _schedule_debounced(room_id: int, content: str, sender_name: str) -> None:
-    """Cancel any pending debounce for this room and schedule a new one.
-    Multiple messages within the debounce window are concatenated."""
+    """Debounce message processing."""
     entry = _room_debounce.get(room_id)
     if entry and entry["task"] and not entry["task"].done():
         entry["task"].cancel()
@@ -116,93 +108,57 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str) -> None:
 
 async def process_message(room_id: int, content: str, sender_name: str) -> None:
     """Core message processing pipeline."""
-    # 1. Typing indicator
     await messenger.send_typing(room_id)
 
     try:
-        # 2. Load context — memory.md (memories + daily logs) + context.md (time + sysinfo)
-        soul = llm.load_soul()
-        history = await hist_store.get_history(room_id)
-        mem_ctx = await mem_store.format_for_prompt()
-        live_ctx = await context_file.refresh()
-        memory_ctx = "\n\n".join(p for p in [mem_ctx, live_ctx] if p)
+        # Load context
+        soul = _load_soul()
+        memory = _read_memory()
 
-        # 3. Build message list and call LLM
-        messages = llm.build_messages(soul, history, content, memory_ctx)
+        # Get absolute path to memory file
+        abs_memory_path = os.path.abspath(MEMORY_FILE)
 
-        session_id = await llm.ensure_room_session(room_id)
-        raw_reply = await llm.chat(
-            messages,
-            session_id=session_id,
-        )
+        # Build system prompt with memory
+        system_prompt = soul
+        system_prompt += f"\n\n## Memory File Location\n\nAbsolute path: `{abs_memory_path}`\n\nTo update memory, use file_reader to read this file, then use file_writer to save the updated content."
+        if memory:
+            system_prompt += f"\n\n## Current Memory\n\n{memory}"
 
-        # 4. Fallback: parse command tags in case LLM doesn't support tool calling.
-        # Also handles skills/daily_log/notify which are not yet tools.
-        mem_commands = mem_store.parse_memory_commands(raw_reply)
-        for cmd in mem_commands:
-            mem_file.save(cmd["key"], cmd["value"], cmd["tags"])
-            logger.info(f"[Memory] Saved: {cmd['key']} = {cmd['value']}")
+        # Build messages
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ]
 
-        # 4b. Parse and execute memory delete commands
-        del_commands = mem_store.parse_memory_delete_commands(raw_reply)
-        for key in del_commands:
-            mem_file.delete(key)
-            logger.info(f"[Memory] Deleted: {key}")
+        # Call LLM_API_fast with auto agent (has access to all tools)
+        headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+        llm_data = {
+            "model": config.LLM_MODEL,
+            "messages": json.dumps(messages),
+            "agent_type": "auto",  # Auto agent uses tools automatically
+        }
 
-        # 4c. Parse and create scheduled jobs
-        sched_commands = sched_store.parse_schedule_commands(raw_reply)
-        for cmd in sched_commands:
-            job_id = await sched_store.add_job(
-                cmd["name"], room_id, cmd["prompt"],
-                cron=cmd["cron"], once_at=cmd["once_at"],
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            response = await client.post(
+                f"{config.LLM_API_URL}/v1/chat/completions",
+                data=llm_data,
+                headers=headers,
             )
-            logger.info(f"[Schedule] Created job #{job_id}: {cmd['name']}")
+            response.raise_for_status()
+            result = response.json()
 
-        # 4d. Parse and create new skills
-        skill_commands = skills_mod.parse_skill_create_commands(raw_reply)
-        for cmd in skill_commands:
-            path = skills_mod.create_skill(cmd["name"], cmd["description"], cmd["instructions"])
-            logger.info(f"[Skills] Created skill '{cmd['name']}' at {path}")
+        reply = result["choices"][0]["message"]["content"]
 
-        # 4e. Parse and append daily log entries
-        log_entries = daily_log.parse_daily_log_commands(raw_reply)
-        for entry in log_entries:
-            daily_log.append_entry(entry)
-
-        # 4f. Parse and send desktop notifications
-        notify_commands = notify.parse_notify_commands(raw_reply)
-        for cmd in notify_commands:
-            notify.send(cmd["title"], cmd["message"])
-
-        # 4g. Refresh human-readable status file if anything changed
-        if mem_commands or del_commands or sched_commands or skill_commands:
-            await status_file.refresh()
-
-        # 5. Strip all command tags from the visible reply
-        reply = mem_store.strip_memory_commands(raw_reply)
-        reply = mem_store.strip_memory_delete_commands(reply)
-        reply = sched_store.strip_schedule_commands(reply)
-        reply = skills_mod.strip_skill_create_commands(reply)
-        reply = daily_log.strip_daily_log_commands(reply)
-        reply = notify.strip_notify_commands(reply)
-        if not reply:
-            reply = "..."
-
-        # 6. Persist the exchange
-        await hist_store.add_message(room_id, "user", content)
-        await hist_store.add_message(room_id, "assistant", reply)
-
-        # 7. Send reply
+        # Send reply back to Messenger
         await messenger.send_message(room_id, reply)
 
     except Exception as exc:
-        logger.error(f"[Webhook] process_message failed: {exc}", exc_info=True)
-        logger.error(f"[Webhook] LLM endpoint in use: {config.LLM_API_URL}/v1/chat/completions")
+        logger.error(f"[Error] process_message failed: {exc}", exc_info=True)
         try:
             if "Connect" in type(exc).__name__ or "Timeout" in type(exc).__name__:
                 user_msg = "⚠️ LLM 서버에 연결할 수 없어요. 잠시 후 다시 시도해주세요."
             else:
-                user_msg = "⚠️ 응답을 생성하는 중 오류가 발생했어요. 잠시 후 다시 시도해주세요."
+                user_msg = f"⚠️ 오류: {str(exc)[:100]}"
             await messenger.send_message(room_id, user_msg)
         except Exception:
             pass
@@ -212,7 +168,7 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
 
 @router.post("/webhook/incoming/{path:path}")
 async def handle_incoming_webhook(path: str, request: Request):
-    """Accept POST triggers from external services (GitHub, calendar, etc.)."""
+    """Accept POST triggers from external services."""
     if config.WEBHOOK_INCOMING_SECRET:
         secret = request.headers.get("x-webhook-secret", "")
         if secret != config.WEBHOOK_INCOMING_SECRET:
@@ -230,6 +186,6 @@ async def handle_incoming_webhook(path: str, request: Request):
         content = f"[Webhook from {source}] {json.dumps(payload, ensure_ascii=False, indent=2)}"
 
     room_id = config.MESSENGER_HOME_ROOM_ID
-    logger.info(f"[Webhook] Incoming webhook from '{source}' → room {room_id}")
+    logger.info(f"[Webhook] Incoming from '{source}' → room {room_id}")
     _schedule_debounced(room_id, content, f"webhook:{source}")
     return {"ok": True}

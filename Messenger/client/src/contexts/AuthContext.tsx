@@ -52,7 +52,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkExistingUser = useCallback(async (serverUrl: string) => {
     setServerUrl(serverUrl);
     try {
-      const res = await api.get('/auth/check');
+      const saved = localStorage.getItem('huni_auth');
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      const userId = parsed?.user?.id;
+      if (!Number.isInteger(userId) || userId <= 0) return null;
+      const res = await api.get(`/auth/check?userId=${userId}`);
       return res.data.user;
     } catch {
       return null;
