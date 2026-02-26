@@ -27,6 +27,7 @@ function buildMessagePayload(m: any) {
     updatedAt: m.updated_at,
     senderName: m.sender_name,
     senderIp: m.sender_ip,
+    isBot: !!m.sender_is_bot,
     readBy: [] as number[],
     reactions: [] as any[],
   };
@@ -72,7 +73,7 @@ async function poll(watcherId: number) {
 
     if (ioRef) {
       const msg = queryOne(
-        `SELECT m.*, u.name as sender_name, u.ip as sender_ip
+        `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
          FROM messages m JOIN users u ON u.id = m.sender_id
          WHERE m.id = ?`,
         [result.lastInsertRowid],

@@ -1,7 +1,7 @@
 """Async client for the LLM_API /v1/chat/completions endpoint."""
 import json
 import logging
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import httpx
 import config
@@ -12,86 +12,39 @@ logger = logging.getLogger(__name__)
 
 async def chat(
     messages: List[Dict[str, str]],
-    agent_type: Optional[str] = None,
     session_id: Optional[str] = None,
     timeout_seconds: float = 120,
     max_attempts: int = 3,
     base_delay: float = 2.0,
-    tools: Optional[List[Dict]] = None,
-    tool_executor: Optional[Callable[[str, dict], Awaitable[str]]] = None,
 ) -> str:
     """
     Call LLM_API chat completions and return the assistant's reply text.
 
-    If `tools` and `tool_executor` are provided, handles tool call responses
-    transparently: executes each tool, appends results, then gets the final
-    text response from the LLM. Callers always receive a plain string.
-
+    Tools are handled server-side by LLM_API_fast's agent loop.
     The endpoint uses multipart/form-data with `messages` as a JSON string.
-    See: LLM_API/backend/api/routes/chat.py
+    See: LLM_API_fast/backend/api/routes/chat.py
     """
-    agent = agent_type or config.LLM_API_AGENT_TYPE
-
     body = await _api_call(
-        messages, agent, session_id, timeout_seconds, max_attempts, base_delay, tools
+        messages, session_id, timeout_seconds, max_attempts, base_delay
     )
-    choice = body["choices"][0]
-    msg = choice["message"]
-    finish_reason = choice.get("finish_reason", "stop")
-
-    # --- Tool call loop (single round) ---
-    if finish_reason == "tool_calls" and tool_executor and msg.get("tool_calls"):
-        tool_calls = msg["tool_calls"]
-        logger.info(f"[LLM] Tool calls requested: {[tc['function']['name'] for tc in tool_calls]}")
-
-        # Build extended messages: original + assistant tool-call message + results
-        extended = list(messages) + [msg]
-        for tc in tool_calls:
-            tool_name = tc["function"]["name"]
-            try:
-                args = json.loads(tc["function"]["arguments"])
-            except (json.JSONDecodeError, KeyError):
-                logger.warning(f"[LLM] Could not parse tool args for {tool_name!r}")
-                args = {}
-
-            result = await tool_executor(tool_name, args)
-            logger.debug(f"[LLM] Tool result for {tool_name!r}: {result!r}")
-            extended.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": result,
-            })
-
-        # Get final text response — no tools on follow-up to prevent infinite loops
-        body = await _api_call(
-            extended, agent, session_id, timeout_seconds, max_attempts, base_delay,
-            tools=None,
-        )
-        msg = body["choices"][0]["message"]
-
-    content = msg.get("content") or ""
-    return content
+    msg = body["choices"][0]["message"]
+    return msg.get("content") or ""
 
 
 async def _api_call(
     messages: List[Dict],
-    agent: str,
     session_id: Optional[str],
     timeout_seconds: float,
     max_attempts: int,
     base_delay: float,
-    tools: Optional[List[Dict]],
 ) -> dict:
     """Single HTTP call to the completions endpoint with retry."""
     form_data: dict = {
         "messages": json.dumps(messages),
-        "agent_type": agent,
         "stream": "false",
     }
     if session_id:
         form_data["session_id"] = session_id
-    if tools:
-        form_data["tools"] = json.dumps(tools)
 
     endpoint = f"{config.LLM_API_URL}/v1/chat/completions"
 
@@ -103,14 +56,14 @@ async def _api_call(
                 return resp.json()
             except Exception as exc:
                 logger.warning(
-                    f"[LLM] Request failed endpoint={endpoint} agent={agent} "
+                    f"[LLM] Request failed endpoint={endpoint} "
                     f"error={type(exc).__name__}: {exc}"
                 )
                 raise
 
     body = await with_retry(
         _call,
-        label=f"LLM chat ({agent})",
+        label="LLM chat",
         max_attempts=max_attempts,
         base_delay=base_delay,
     )
@@ -125,10 +78,17 @@ async def _api_call(
 
 
 def load_soul() -> str:
-    """Read SOUL.md and return its contents as a string."""
+    """Read SOUL.md and return its contents as a string.
+
+    Replaces {HOONBOT_DATA_DIR} with the actual absolute path of Hoonbot's
+    data/ directory so SOUL.md stays portable across installations.
+    """
     try:
         with open(config.SOUL_PATH, "r", encoding="utf-8") as f:
-            return f.read().strip()
+            soul = f.read().strip()
+        # Forward-slash path works on both Windows and Linux for the LLM's benefit
+        data_dir = str(config.DATA_DIR).replace("\\", "/")
+        return soul.replace("{HOONBOT_DATA_DIR}", data_dir)
     except FileNotFoundError:
         logger.warning(f"[LLM] SOUL.md not found at {config.SOUL_PATH}")
         return "You are Hoonbot, a helpful personal AI assistant."
@@ -142,7 +102,7 @@ def build_messages(
 ) -> List[Dict[str, str]]:
     """
     Assemble the full messages list:
-    [...history, system (SOUL + memory_context + skills), user]
+    [system (SOUL + memory_context + skills), ...history, user]
 
     memory_context should contain both the persistent memory (memory.md)
     and the live context (context.md) — assembled by the caller.
@@ -160,8 +120,7 @@ def build_messages(
 
     system_content = "\n\n".join(system_parts)
 
-    messages = list(history)
-    # Inject SOUL right before the current user command.
-    messages.append({"role": "system", "content": system_content})
+    messages = [{"role": "system", "content": system_content}]
+    messages.extend(history)
     messages.append({"role": "user", "content": user_content})
     return messages

@@ -34,7 +34,6 @@ from core import context_file
 from core import skills as skills_mod
 from core import daily_log
 from core import notify
-from core import tools as tools_mod
 from core import memory_file as mem_file
 
 logger = logging.getLogger(__name__)
@@ -128,16 +127,12 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
         live_ctx = await context_file.refresh()
         memory_ctx = "\n\n".join(p for p in [mem_ctx, live_ctx] if p)
 
-        # 3. Build message list and call LLM with tool calling enabled
+        # 3. Build message list and call LLM
         messages = llm.build_messages(soul, history, content, memory_ctx)
-
-        async def _tool_executor(tool_name: str, args: dict) -> str:
-            return await tools_mod.execute(tool_name, args, room_id=room_id)
 
         raw_reply = await llm.chat(
             messages,
-            tools=tools_mod.HOONBOT_TOOLS,
-            tool_executor=_tool_executor,
+            session_id=f"hoonbot_{room_id}",
         )
 
         # 4. Fallback: parse command tags in case LLM doesn't support tool calling.

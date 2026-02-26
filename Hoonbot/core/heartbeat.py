@@ -54,7 +54,7 @@ Never echo the internal probe token as a user-visible message.
 
 _TASK_EXECUTOR_SYSTEM = """\
 You are Hoonbot executing a background task. Complete the following task and return a concise
-summary of the result. You can save important information using the save_memory tool.
+summary of the result. Save important information using the file_writer tool.
 
 Task: {task}
 """
@@ -94,23 +94,17 @@ async def _run_scheduled_jobs(local_now: datetime = None) -> None:
             memory_ctx = "\n\n".join(p for p in [mem_ctx, live_ctx] if p)
             history = await hist_store.get_history(room_id)
 
-            from core import tools as tools_mod
             messages = llm.build_messages(
                 soul, history,
                 f"Execute this scheduled task: {job['prompt']}",
                 memory_ctx,
             )
 
-            async def _tool_executor(tool_name: str, args: dict) -> str:
-                return await tools_mod.execute(tool_name, args, room_id=room_id)
-
             result = await llm.chat(
                 messages,
-                agent_type="chat",
+                session_id=f"hoonbot_{room_id}",
                 timeout_seconds=45,
                 max_attempts=1,
-                tools=tools_mod.HOONBOT_TOOLS,
-                tool_executor=_tool_executor,
             )
             await _process_llm_commands(result)
             reply = _strip_llm_commands(result)
@@ -169,7 +163,7 @@ async def tick() -> None:
 
         raw = await llm.chat(
             messages,
-            agent_type="chat",
+            session_id=f"hoonbot_{room_id}",
             timeout_seconds=45,
             max_attempts=1,
         )
@@ -239,7 +233,7 @@ async def _run_background_task(room_id: int, task_desc: str) -> None:
         ]
         result = await llm.chat(
             messages,
-            agent_type="auto",
+            session_id=f"hoonbot_{room_id}",
             timeout_seconds=90,
             max_attempts=2,
         )
@@ -335,8 +329,6 @@ async def _maybe_compaction_flushes() -> None:
         soul = llm.load_soul()
 
         try:
-            from core import tools as tools_mod
-
             flush_messages = [
                 {
                     "role": "system",
@@ -345,7 +337,7 @@ async def _maybe_compaction_flushes() -> None:
                         "Your conversation history for this room is approaching its storage limit. "
                         "Older messages will soon be dropped. Review the recent conversation below "
                         "and save any important long-term facts, preferences, decisions, or context "
-                        "using the save_memory tool. "
+                        "using the file_writer tool to write to memory.md. "
                         "Focus only on information worth keeping across sessions. "
                         "Do not save trivial or transient details."
                     ),
@@ -357,16 +349,11 @@ async def _maybe_compaction_flushes() -> None:
                 },
             ]
 
-            async def _tool_executor(tool_name: str, args: dict) -> str:
-                return await tools_mod.execute(tool_name, args, room_id=room_id)
-
             raw = await llm.chat(
                 flush_messages,
-                agent_type="chat",
+                session_id=f"hoonbot_{room_id}",
                 timeout_seconds=45,
                 max_attempts=1,
-                tools=tools_mod.HOONBOT_TOOLS,
-                tool_executor=_tool_executor,
             )
             # Fallback: also parse command tags in case LLM didn't use tools
             mem_commands = mem_store.parse_memory_commands(raw)

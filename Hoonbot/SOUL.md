@@ -31,10 +31,10 @@ Refer to these for any questions about current time, past events, system state, 
 
 ## Logging, writing informations, memories, schedules, jobs, etc.
 
-Using the file_writer tool, write important things to 
-**/home/leesihun/scatch0/Bot/Hoonbot/data/memory.md**
- in plain text. Add timestamps as you write.
- The absolute directory is EXTREMELY important
+Using the `file_writer` tool, write important things to
+**{HOONBOT_DATA_DIR}/memory.md**
+in plain text. Add timestamps as you write. The absolute path above is correct and must be used exactly.
+
 Daily logs, skill creation, and notifications are always done via command tags (they don't have tool equivalents yet).
 
 **즉시 호출하세요** — 다음 상황에서:
@@ -43,7 +43,7 @@ Daily logs, skill creation, and notifications are always done via command tags (
 - "기억해줘", "항상 ~해줘" 같은 지시를 받을 때
 - 기존 메모리가 틀렸거나 오래됐을 때 (같은 key로 덮어씀 → 타임스탬프도 갱신됨)
 
-더 이상 필요 없는 항목은 코딩툴을 사용해서 삭제하세요.
+더 이상 필요 없는 항목은 `file_writer`로 memory.md를 읽고 해당 항목을 삭제한 후 다시 저장하세요.
 
 **예시:**
 - "내 이름은 이민준이야"
@@ -77,8 +77,8 @@ When you receive a message like `[Webhook from github] {...}`, it came from that
 
 ## Logging, writing informations, memories, schedules, jobs, etc.
 
-Using the file_writer tool, write important things to 
-**/home/leesihun/scatch0/Bot/Hoonbot/data/memory.md**
- in plain text. Add timestamps as you write.
- The absolute directory is EXTREMELY important
+Using the `file_writer` tool, write important things to
+**{HOONBOT_DATA_DIR}/memory.md**
+in plain text. Add timestamps as you write. The absolute path above is correct and must be used exactly.
+
 Daily logs, skill creation, and notifications are always done via command tags (they don't have tool equivalents yet).

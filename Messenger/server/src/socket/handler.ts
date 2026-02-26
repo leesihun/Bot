@@ -31,7 +31,7 @@ function getReactionsForMessage(messageId: number): MessageReaction[] {
 function getReplyTo(replyToId: number | null): any {
   if (!replyToId) return null;
   const row = queryOne(
-    `SELECT m.*, u.name as sender_name, u.ip as sender_ip
+    `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
      FROM messages m JOIN users u ON u.id = m.sender_id
      WHERE m.id = ?`,
     [replyToId],
@@ -54,6 +54,7 @@ function getReplyTo(replyToId: number | null): any {
     updatedAt: row.updated_at,
     senderName: row.sender_name,
     senderIp: row.sender_ip,
+    isBot: !!row.sender_is_bot,
     readBy: [],
     reactions: [],
     replyTo: null,
@@ -114,7 +115,7 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
 
       const messageId = result.lastInsertRowid;
       const message = queryOne(`
-        SELECT m.*, u.name as sender_name, u.ip as sender_ip
+        SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
         FROM messages m
         JOIN users u ON u.id = m.sender_id
         WHERE m.id = ?
@@ -142,6 +143,7 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
         updatedAt: message.updated_at,
         senderName: message.sender_name,
         senderIp: message.sender_ip,
+        isBot: !!message.sender_is_bot,
         readBy: [] as number[],
         reactions: [] as any[],
         replyTo: getReplyTo(message.reply_to),
@@ -250,7 +252,7 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       run('INSERT INTO pinned_messages (message_id, room_id, pinned_by) VALUES (?, ?, ?)', [messageId, roomId, userId]);
 
       const fullMsg = queryOne(
-        `SELECT m.*, u.name as sender_name, u.ip as sender_ip
+        `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
          FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`,
         [messageId],
       );
@@ -281,6 +283,7 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
           updatedAt: fullMsg.updated_at,
           senderName: fullMsg.sender_name,
           senderIp: fullMsg.sender_ip,
+          isBot: !!fullMsg.sender_is_bot,
           readBy: readBy.map((r: any) => r.user_id),
           reactions: getReactionsForMessage(messageId),
           replyTo: getReplyTo(fullMsg.reply_to),
