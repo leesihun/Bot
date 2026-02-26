@@ -130,9 +130,10 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
         # 3. Build message list and call LLM
         messages = llm.build_messages(soul, history, content, memory_ctx)
 
+        session_id = await llm.ensure_room_session(room_id)
         raw_reply = await llm.chat(
             messages,
-            session_id=f"hoonbot_{room_id}",
+            session_id=session_id,
         )
 
         # 4. Fallback: parse command tags in case LLM doesn't support tool calling.

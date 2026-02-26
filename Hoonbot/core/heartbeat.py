@@ -100,9 +100,10 @@ async def _run_scheduled_jobs(local_now: datetime = None) -> None:
                 memory_ctx,
             )
 
+            session_id = await llm.ensure_room_session(room_id)
             result = await llm.chat(
                 messages,
-                session_id=f"hoonbot_{room_id}",
+                session_id=session_id,
                 timeout_seconds=45,
                 max_attempts=1,
             )
@@ -161,9 +162,10 @@ async def tick() -> None:
             messages.extend(filtered_history[-10:])
         messages.append({"role": "user", "content": _HEARTBEAT_PROBE_MESSAGE})
 
+        session_id = await llm.ensure_room_session(room_id)
         raw = await llm.chat(
             messages,
-            session_id=f"hoonbot_{room_id}",
+            session_id=session_id,
             timeout_seconds=45,
             max_attempts=1,
         )
@@ -231,9 +233,10 @@ async def _run_background_task(room_id: int, task_desc: str) -> None:
             {"role": "system", "content": system},
             {"role": "user", "content": task_desc},
         ]
+        session_id = await llm.ensure_room_session(room_id)
         result = await llm.chat(
             messages,
-            session_id=f"hoonbot_{room_id}",
+            session_id=session_id,
             timeout_seconds=90,
             max_attempts=2,
         )
@@ -349,9 +352,10 @@ async def _maybe_compaction_flushes() -> None:
                 },
             ]
 
+            session_id = await llm.ensure_room_session(room_id)
             raw = await llm.chat(
                 flush_messages,
-                session_id=f"hoonbot_{room_id}",
+                session_id=session_id,
                 timeout_seconds=45,
                 max_attempts=1,
             )

@@ -1,4 +1,5 @@
 """Async client for the LLM_API /v1/chat/completions endpoint."""
+import asyncio
 import json
 import logging
 from typing import Dict, List, Optional
@@ -8,6 +9,76 @@ import config
 from core.retry import with_retry
 
 logger = logging.getLogger(__name__)
+_ROOM_SESSION_CACHE: dict[int, str] = {}
+_ROOM_SESSION_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def _state_key_for_room(room_id: int) -> str:
+    return f"_llm_session_room_{room_id}"
+
+
+def _room_lock(room_id: int) -> asyncio.Lock:
+    lock = _ROOM_SESSION_LOCKS.get(room_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _ROOM_SESSION_LOCKS[room_id] = lock
+    return lock
+
+
+async def _is_session_valid(session_id: str, timeout_seconds: float = 10.0) -> bool:
+    endpoint = f"{config.LLM_API_URL}/api/chat/history/{session_id}"
+    async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
+        resp = await client.get(endpoint)
+    if resp.status_code == 200:
+        return True
+    if resp.status_code == 404:
+        return False
+    resp.raise_for_status()
+    return False
+
+
+async def _create_new_session(timeout_seconds: float = 45.0) -> str:
+    """
+    Create a new LLM session by calling chat without `session_id` (chat_new flow).
+    """
+    endpoint = f"{config.LLM_API_URL}/v1/chat/completions"
+    form_data = {
+        "messages": json.dumps([{"role": "user", "content": "Session bootstrap."}]),
+        "stream": "false",
+    }
+    async with httpx.AsyncClient(timeout=timeout_seconds, trust_env=False) as client:
+        resp = await client.post(endpoint, data=form_data)
+    resp.raise_for_status()
+    body = resp.json()
+    session_id = body.get("x_session_id")
+    if not session_id:
+        raise ValueError(f"LLM API response missing x_session_id: {body}")
+    return session_id
+
+
+async def ensure_room_session(room_id: int, timeout_seconds: float = 45.0) -> str:
+    """
+    Ensure a valid room-bound session_id exists in LLM API.
+    Persists session IDs in state.json and keeps an in-memory cache.
+    """
+    from core import memory_file as mem_file
+
+    async with _room_lock(room_id):
+        cached = _ROOM_SESSION_CACHE.get(room_id)
+        if cached and await _is_session_valid(cached):
+            return cached
+
+        state_key = _state_key_for_room(room_id)
+        saved = mem_file.recall_state(state_key)
+        if saved and await _is_session_valid(saved):
+            _ROOM_SESSION_CACHE[room_id] = saved
+            return saved
+
+        new_session = await _create_new_session(timeout_seconds=timeout_seconds)
+        mem_file.save_state(state_key, new_session)
+        _ROOM_SESSION_CACHE[room_id] = new_session
+        logger.info(f"[LLM] Created new room session room_id={room_id} session_id={new_session}")
+        return new_session
 
 
 async def chat(
