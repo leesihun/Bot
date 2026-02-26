@@ -34,11 +34,11 @@ def _read_memory() -> str:
         return ""
 
 
-def _load_soul() -> str:
-    """Load SOUL.md as system prompt."""
-    soul_file = os.path.join(os.path.dirname(__file__), "..", "SOUL.md")
+def _load_system_prompt() -> str:
+    """Load PROMPT.md as system prompt (unified prompt file)."""
+    prompt_file = os.path.join(os.path.dirname(__file__), "..", "PROMPT.md")
     try:
-        with open(soul_file, "r", encoding="utf-8") as f:
+        with open(prompt_file, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
         return "You are a helpful AI assistant."
@@ -111,18 +111,26 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
     await messenger.send_typing(room_id)
 
     try:
+        # Validate configuration
+        if not config.LLM_API_KEY:
+            raise ValueError("LLM_API_KEY is not set. Set it with: export LLM_API_KEY='your_token'")
+        if not config.LLM_MODEL:
+            raise ValueError("LLM_MODEL is not set. Set it with: export LLM_MODEL='your_model'")
+
         # Load context
-        soul = _load_soul()
+        system_prompt_base = _load_system_prompt()
         memory = _read_memory()
 
         # Get absolute path to memory file
         abs_memory_path = os.path.abspath(MEMORY_FILE)
 
-        # Build system prompt with memory
-        system_prompt = soul
-        system_prompt += f"\n\n## Memory File Location\n\nAbsolute path: `{abs_memory_path}`\n\nTo update memory, use file_reader to read this file, then use file_writer to save the updated content."
+        # Build system prompt: base prompt + memory file location + current memory
+        system_prompt = system_prompt_base
+        system_prompt += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{abs_memory_path}`"
         if memory:
-            system_prompt += f"\n\n## Current Memory\n\n{memory}"
+            system_prompt += f"\n\n## Current Memory Content\n\n{memory}"
+        else:
+            system_prompt += f"\n\n## Current Memory\n\n(No memory saved yet)"
 
         # Build messages
         messages = [
@@ -138,6 +146,7 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
             "agent_type": "auto",  # Auto agent uses tools automatically
         }
 
+        logger.info(f"[LLM] Calling {config.LLM_API_URL}/v1/chat/completions with model={config.LLM_MODEL}")
         async with httpx.AsyncClient(timeout=300.0) as client:
             response = await client.post(
                 f"{config.LLM_API_URL}/v1/chat/completions",
